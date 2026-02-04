@@ -84,7 +84,9 @@ npx tsx ralph-loop-copilot.ts --model=gpt-5.2-codex --log=run.log
 
 ## Custom Instructions
 
-The Copilot implementation automatically loads instruction files from:
+### Copilot Implementation
+
+The Copilot implementation explicitly loads instruction files from:
 
 **User-level:**
 - `~/.github/copilot-instructions.md`
@@ -95,6 +97,10 @@ The Copilot implementation automatically loads instruction files from:
 - `.github/copilot-instructions.md`
 - `COPILOT.md`
 - `CLAUDE.md`
+
+### Claude Implementation
+
+The Claude implementation uses `settingSources: ["project", "user"]` which delegates instruction file loading to the Claude Agent SDK. The SDK automatically discovers and loads configuration files from standard locations, though the exact paths depend on the SDK's internal behavior.
 
 ## Subagent Support
 
