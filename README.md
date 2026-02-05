@@ -2,6 +2,18 @@
 
 Run AI agents in a loop with Claude or GitHub Copilot, enabling autonomous iteration and continuous task execution.
 
+> **⚠️ WARNING: USE AT YOUR OWN RISK**
+> 
+> This code is provided **as-is** for educational and experimental purposes only. Agentic loops allow AI agents to run autonomously with access to system tools, file operations, and command execution. 
+> 
+> **DO NOT USE** this code unless you:
+> - Fully understand the code and what it does
+> - Understand the implications of autonomous agent execution
+> - Are aware of the potential risks (file modifications, command execution, resource consumption, costs)
+> - Have reviewed and tested the code in a safe environment
+> 
+> The authors assume no responsibility for any damages, data loss, unexpected costs, or other issues arising from the use of this software.
+
 ## Overview
 
 This repository provides two implementations of the "Ralph Loop" pattern - a technique for running AI agents in repeated iterations with comprehensive monitoring, token tracking, and subagent spawning capabilities.
