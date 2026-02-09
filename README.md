@@ -2,6 +2,8 @@
 
 Run AI agents in a loop with Claude or GitHub Copilot, enabling autonomous iteration and continuous task execution.
 
+This is the accompaning repo for the article [The Human On the Loop: A Practical Guide to Agentic Engineering](https://dotnetting.net/2026/02/the-human-on-the-loop-a-practical-guide-to-agentic-engineering/).
+
 > **⚠️ WARNING: USE AT YOUR OWN RISK**
 > 
 > This code is provided **as-is** for educational and experimental purposes only. Agentic loops allow AI agents to run autonomously with access to system tools, file operations, and command execution. 
