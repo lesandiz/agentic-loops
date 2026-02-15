@@ -14,6 +14,7 @@ interface RalphLoopConfig {
   verbose?: boolean;
   logFile?: string;
   streaming?: boolean;
+  cwd?: string;
 }
 
 interface TokenUsage {
@@ -74,6 +75,7 @@ const DEFAULT_CONFIG: RalphLoopConfig = {
   verbose: false,
   logFile: undefined,
   streaming: true,
+  cwd: undefined,
 };
 
 function sleep(ms: number): Promise<void> {
@@ -236,8 +238,8 @@ async function spawnSubagent(
   let lastMessage = "";
   let sessionTokens = 0;
 
-  log("🔀", `[Subagent:${agentType}] Starting isolated session`);
-  logVerbose("🔀", `[Subagent:${agentType}] Task: ${task}`, verbose);
+  log("📦", `[Subagent:${agentType}] Starting isolated session`);
+  logVerbose("📦", `[Subagent:${agentType}] Task: ${task}`, verbose);
 
   const subSession = await client.createSession({
     model,
@@ -275,13 +277,13 @@ async function spawnSubagent(
           const toolName = eventData?.toolName as string;
           if (toolName) {
             subToolCalls[toolName] = (subToolCalls[toolName] || 0) + 1;
-            logVerbose("🔀", `[Subagent:${agentType}] Tool: ${toolName}`, verbose);
+            logVerbose("📦", `[Subagent:${agentType}] Tool: ${toolName}`, verbose);
           }
           break;
 
         case "session.idle":
           const durationMs = Date.now() - startTime;
-          log("🔀", `[Subagent:${agentType}] Complete (${durationMs}ms, ${sessionTokens} tokens)`);
+          log("📦", `[Subagent:${agentType}] Complete (${durationMs}ms, ${sessionTokens} tokens)`);
           resolve({
             success: true,
             summary: lastMessage,
@@ -412,8 +414,9 @@ function readPrompt(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8").trim();
 }
 
-function loadInstructions(): string {
+function loadInstructions(cwd?: string): string {
   const instructions: string[] = [];
+  const projectDir = cwd || process.cwd();
 
   // User-level instruction files
   const userPaths = [
@@ -424,9 +427,9 @@ function loadInstructions(): string {
 
   // Project-level instruction files
   const projectPaths = [
-    path.join(process.cwd(), ".github", "copilot-instructions.md"),
-    path.join(process.cwd(), "COPILOT.md"),
-    path.join(process.cwd(), "CLAUDE.md"),
+    path.join(projectDir, ".github", "copilot-instructions.md"),
+    path.join(projectDir, "COPILOT.md"),
+    path.join(projectDir, "CLAUDE.md"),
   ];
 
   // Load user instructions (first match wins)
@@ -458,7 +461,10 @@ function loadInstructions(): string {
 
 async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const prompt = readPrompt(cfg.promptFile!);
+  const promptPath = cfg.cwd
+    ? path.resolve(cfg.cwd, cfg.promptFile!)
+    : cfg.promptFile!;
+  const prompt = readPrompt(promptPath);
   const stats = initStats();
 
   if (cfg.logFile) {
@@ -467,14 +473,17 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 
   log("🚀", `Starting ralph loop: max ${cfg.maxIterations} iterations, ${cfg.delayMs}ms delay`);
   log("🤖", `Model: ${cfg.model}`);
-  log("📝", `Prompt File: ${cfg.promptFile}`);
+  if (cfg.cwd) log("📂", `Working directory: ${cfg.cwd}`);
+  log("📝", `Prompt: ${promptPath}`);
 
   // Load instruction files
-  const customInstructions = loadInstructions();
+  const customInstructions = loadInstructions(cfg.cwd);
   if (cfg.verbose) log("🔍", "Verbose mode enabled");
-  if (cfg.logFile) log("📁", `Logging to: ${cfg.logFile}`);
+  if (cfg.logFile) log("🪵", `Logging to: ${cfg.logFile}`);
 
-  const client = new CopilotClient();
+  const client = new CopilotClient({
+    ...(cfg.cwd && { cwd: cfg.cwd }),
+  });
 
   try {
     await client.start();
@@ -483,10 +492,25 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
     // Create the subagent tool with handler
     const subagentTool = createSubagentTool(client, stats, cfg.model!, cfg.verbose!);
 
+    const promptDir = path.dirname(path.resolve(promptPath));
+
     for (let i = 0; i < cfg.maxIterations; i++) {
+      // Check for stop signals at the start of each iteration
+      const doneFile = path.join(promptDir, "ralph.done");
+      const blockedFile = path.join(promptDir, "ralph.blocked");
+
+      if (fs.existsSync(doneFile)) {
+        log("🏁", `Found ${doneFile} - stopping loop`);
+        break;
+      }
+      if (fs.existsSync(blockedFile)) {
+        log("🚫", `Found ${blockedFile} - stopping loop`);
+        break;
+      }
+
       stats.iterations++;
       currentIteration = i + 1;
-      log("🔄", `\n=== Iteration ${i + 1}/${cfg.maxIterations} ===`);
+      log("🔄", `=== Iteration ${i + 1}/${cfg.maxIterations} ===`);
 
       const session = await client.createSession({
         model: cfg.model,
@@ -606,7 +630,7 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 
             // Session completed
             case "session.idle":
-              log("✅", "Iteration complete");
+              log("✅", `Completed: iteration ${currentIteration}`);
               resolve();
               break;
 
@@ -643,7 +667,7 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
     log("🛑", "Copilot client stopped");
   }
 
-  log("🏁", "\n=== Ralph loop complete ===");
+  log("🏁", "=== Ralph loop complete ===");
   printStats(stats);
   closeLogFile();
 }
@@ -651,10 +675,11 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 // CLI usage: npx tsx ralph-loop-copilot.ts [options]
 //   --iterations=N    Max iterations (default: 5)
 //   --delay=N         Delay between iterations in ms (default: 1000)
-//   --model=NAME      Model to use (default: claude-sonnet-4-5)
+//   --model=NAME      Model to use (default: claude-sonnet-4.5)
+//   --prompt=FILE     Prompt file path (default: PROMPT.md, relative to --cwd if set)
+//   --cwd=DIR         Working directory for Copilot tools and prompt file
 //   --verbose         Enable verbose output
 //   --log=FILE        Write logs to file
-//   --prompt=FILE     Prompt file path (default: PROMPT.md)
 //   --no-streaming    Disable streaming mode
 //
 // Available models (via Copilot):
@@ -681,6 +706,8 @@ function parseArgs(args: string[]): Partial<RalphLoopConfig> {
       config.logFile = arg.split("=")[1];
     } else if (arg.startsWith("--prompt=")) {
       config.promptFile = arg.split("=")[1];
+    } else if (arg.startsWith("--cwd=")) {
+      config.cwd = arg.split("=")[1];
     } else if (arg === "--no-streaming") {
       config.streaming = false;
     } else if (arg === "--help" || arg === "-h") {
@@ -692,8 +719,9 @@ Usage: npx tsx ralph-loop-copilot.ts [options]
 Options:
   --iterations=N    Max iterations (default: 5)
   --delay=N         Delay between iterations in ms (default: 1000)
-  --model=NAME      Model to use (default: gpt-4o)
-  --prompt=FILE     Prompt file path (default: PROMPT.md)
+  --model=NAME      Model to use (default: claude-sonnet-4.5)
+  --prompt=FILE     Prompt file path (default: PROMPT.md, relative to --cwd if set)
+  --cwd=DIR         Working directory for Copilot tools and prompt file
   --verbose, -v     Enable verbose output (show full tool inputs)
   --log=FILE        Write logs to file in addition to console
   --no-streaming    Disable streaming mode
