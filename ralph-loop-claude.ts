@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import * as fs from "fs";
+import * as path from "path";
 
 interface RalphLoopConfig {
   maxIterations: number;
@@ -8,6 +9,7 @@ interface RalphLoopConfig {
   model?: string;
   verbose?: boolean;
   logFile?: string;
+  cwd?: string;
 }
 
 interface TokenUsage {
@@ -28,11 +30,12 @@ interface RunStats {
 
 const DEFAULT_CONFIG: RalphLoopConfig = {
   maxIterations: 5,
-  delayMs: 1000,
+  delayMs: 5000,
   promptFile: "PROMPT.md",
   model: "claude-sonnet-4-5@20250929",
   verbose: false,
   logFile: undefined,
+  cwd: undefined,
 };
 
 function sleep(ms: number): Promise<void> {
@@ -68,7 +71,7 @@ function logVerbose(prefix: string, msg: string, verbose: boolean): void {
     log(prefix, msg);
   } else if (logFileStream) {
     const ts = new Date().toISOString().slice(11, 23);
-    logFileStream.write(`[${ts}] ${prefix} ${msg}\n`);
+    logFileStream.write(`[${ts}][${currentIteration}] ${prefix} ${msg}\n`);
   }
 }
 
@@ -150,7 +153,7 @@ function printStats(stats: RunStats): void {
   log("📊", `Context compactions: ${stats.compactions}`);
   log("📊", `Elapsed time: ${elapsed}`);
 
-  log("📊", "Token usage (all sessions):");
+  log("📊", "Token usage:");
   log("📊", `  Input tokens:  ${formatNumber(stats.tokens.inputTokens)}`);
   log("📊", `  Output tokens: ${formatNumber(stats.tokens.outputTokens)}`);
   log("📊", `  Total tokens:  ${formatNumber(totalTokens)}`);
@@ -175,7 +178,10 @@ function readPrompt(filePath: string): string {
 
 async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const prompt = readPrompt(cfg.promptFile!);
+  const promptPath = cfg.cwd
+    ? path.resolve(cfg.cwd, cfg.promptFile!)
+    : cfg.promptFile!;
+  const prompt = readPrompt(promptPath);
   const stats = initStats();
 
   if (cfg.logFile) {
@@ -184,20 +190,37 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 
   log("🚀", `Starting ralph loop: max ${cfg.maxIterations} iterations, ${cfg.delayMs}ms delay`);
   log("🤖", `Model: ${cfg.model}`);
-  log("📝", `Prompt File: ${cfg.promptFile}`);
+  if (cfg.cwd) log("📂", `Working directory: ${cfg.cwd}`);
+  log("📝", `Prompt: ${promptPath}`);
   if (cfg.verbose) log("🔍", "Verbose mode enabled");
-  if (cfg.logFile) log("📁", `Logging to: ${cfg.logFile}`);
+  if (cfg.logFile) log("🪵", `Logging to: ${cfg.logFile}`);
+
+  const promptDir = path.dirname(promptPath);
 
   for (let i = 0; i < cfg.maxIterations; i++) {
+    // Check for stop signals at the start of each iteration
+    const doneFile = path.join(promptDir, "ralph.done");
+    const blockedFile = path.join(promptDir, "ralph.blocked");
+
+    if (fs.existsSync(doneFile)) {
+      log("🏁", `Found ${doneFile} - stopping loop`);
+      break;
+    }
+    if (fs.existsSync(blockedFile)) {
+      log("🚫", `Found ${blockedFile} - stopping loop`);
+      break;
+    }
+
     stats.iterations++;
     currentIteration = i + 1;
-    log("🔄", `\n=== Iteration ${i + 1}/${cfg.maxIterations} ===`);
+    log("🔄", `=== Iteration ${i + 1}/${cfg.maxIterations} ===`);
 
     for await (const message of query({
       prompt,
       options: {
         permissionMode: "bypassPermissions",
         model: cfg.model,
+        cwd: cfg.cwd,
         executable: "node",
         settingSources: ["project", "user"],
         allowedTools: [
@@ -300,14 +323,14 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
     }
   }
 
-  log("🏁", "\n=== Ralph loop complete ===");
+  log("🏁", "=== Ralph loop complete ===");
   printStats(stats);
   closeLogFile();
 }
 
 // CLI usage: npx tsx ralph-loop-claude.ts [options]
 //   --iterations=N    Max iterations (default: 5)
-//   --delay=N         Delay between iterations in ms (default: 1000)
+//   --delay=N         Delay between iterations in ms (default: 5000)
 //   --model=NAME      Model to use (default: claude-sonnet-4-5@20250929)
 //   --verbose         Enable verbose output
 //   --log=FILE        Write logs to file
@@ -334,6 +357,8 @@ function parseArgs(args: string[]): Partial<RalphLoopConfig> {
       config.logFile = arg.split("=")[1];
     } else if (arg.startsWith("--prompt=")) {
       config.promptFile = arg.split("=")[1];
+    } else if (arg.startsWith("--cwd=")) {
+      config.cwd = arg.split("=")[1];
     } else if (arg === "--help" || arg === "-h") {
       console.log(`
 ralph-loop-claude - Run Claude agents in a loop
@@ -342,9 +367,10 @@ Usage: npx tsx ralph-loop-claude.ts [options]
 
 Options:
   --iterations=N    Max iterations (default: 5)
-  --delay=N         Delay between iterations in ms (default: 1000)
+  --delay=N         Delay between iterations in ms (default: 5000)
   --model=NAME      Model to use (default: claude-sonnet-4-5@20250929)
-  --prompt=FILE     Prompt file path (default: PROMPT.md)
+  --prompt=FILE     Prompt file path (default: PROMPT.md, relative to --cwd if set)
+  --cwd=DIR         Working directory for Claude tools and prompt file
   --verbose, -v     Enable verbose output (show full tool inputs)
   --log=FILE        Write logs to file in addition to console
   --help, -h        Show this help message
