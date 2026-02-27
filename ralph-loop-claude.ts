@@ -32,7 +32,7 @@ const DEFAULT_CONFIG: RalphLoopConfig = {
   maxIterations: 5,
   delayMs: 5000,
   promptFile: "PROMPT.md",
-  model: "claude-sonnet-4-5@20250929",
+  model: "claude-sonnet-4-6@default",
   verbose: false,
   logFile: undefined,
   cwd: undefined,
@@ -331,15 +331,15 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 // CLI usage: npx tsx ralph-loop-claude.ts [options]
 //   --iterations=N    Max iterations (default: 5)
 //   --delay=N         Delay between iterations in ms (default: 5000)
-//   --model=NAME      Model to use (default: claude-sonnet-4-5@20250929)
+//   --model=NAME      Model to use (default: claude-sonnet-4-6@default)
 //   --verbose         Enable verbose output
 //   --log=FILE        Write logs to file
 //   --prompt=FILE     Prompt file path (default: PROMPT.md)
 //
 // Using Vertex AI model names:
 // - claude-3-5-haiku@20241022 or claude-haiku-4-5@20251001
-// - claude-sonnet-4-5@20250929
-// - claude-opus-4-5@20251101
+// - claude-sonnet-4-6@default
+// - claude-opus-4-6@default
 
 function parseArgs(args: string[]): Partial<RalphLoopConfig> {
   const config: Partial<RalphLoopConfig> = {};
@@ -368,7 +368,7 @@ Usage: npx tsx ralph-loop-claude.ts [options]
 Options:
   --iterations=N    Max iterations (default: 5)
   --delay=N         Delay between iterations in ms (default: 5000)
-  --model=NAME      Model to use (default: claude-sonnet-4-5@20250929)
+  --model=NAME      Model to use (default: claude-sonnet-4-6@default)
   --prompt=FILE     Prompt file path (default: PROMPT.md, relative to --cwd if set)
   --cwd=DIR         Working directory for Claude tools and prompt file
   --verbose, -v     Enable verbose output (show full tool inputs)
@@ -376,8 +376,8 @@ Options:
   --help, -h        Show this help message
 
 Models (Vertex AI):
-  claude-sonnet-4-5@20250929   (default)
-  claude-opus-4-5@20251101
+  claude-sonnet-4-6@default   (default)
+  claude-opus-4-6@default
   claude-haiku-4-5@20251001
 `);
       process.exit(0);

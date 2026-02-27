@@ -53,7 +53,7 @@ npm run ralph:claude
 
 # With options
 npx tsx ralph-loop-claude.ts --iterations=10 --delay=2000 --verbose
-npx tsx ralph-loop-claude.ts --model=claude-opus-4-5@20251101 --log=run.log
+npx tsx ralph-loop-claude.ts --model=claude-opus-4-6@default --log=run.log
 ```
 
 ### GitHub Copilot SDK
@@ -83,8 +83,8 @@ npx tsx ralph-loop-copilot.ts --model=gpt-5.2-codex --log=run.log
 ## Available Models
 
 ### Claude (via Vertex AI)
-- `claude-sonnet-4-5@20250929` (default)
-- `claude-opus-4-5@20251101`
+- `claude-sonnet-4-6@default` (default)
+- `claude-opus-4-6@default`
 - `claude-haiku-4-5@20251001`
 
 ### Copilot

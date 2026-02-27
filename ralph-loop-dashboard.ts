@@ -271,6 +271,12 @@ class LoopEngine extends EventEmitter {
     return item;
   }
 
+  changeModel(model: string): void {
+    this.cfg.model = model;
+    this.log("🔄", `Model changed to: ${model} (takes effect next iteration)`, "system");
+    this.emit("model-change", { model });
+  }
+
   /** Drain steering queue, interrupt the running query, and inject steering via streamInput. */
   private async injectSteering(queryRef: Query): Promise<void> {
     const items = this.steeringQueue.splice(0);
@@ -542,6 +548,7 @@ class HttpDashboardServer {
     this.engine.on("tool", (data: { name: string; context: string; iteration: number }) => this.broadcast("tool", data));
     this.engine.on("steer-ack", (data: SteeringItem) => this.broadcast("steer-ack", data));
     this.engine.on("iteration-summary", (data: IterationTokenSummary) => this.broadcast("iteration-summary", data));
+    this.engine.on("model-change", (data: { model: string }) => this.broadcast("model-change", data));
   }
 
   private broadcast(event: string, data: unknown): void {
@@ -588,6 +595,8 @@ class HttpDashboardServer {
     } else if (method === "POST" && url === "/api/stop") {
       this.engine.stop();
       this.jsonResponse(res, 200, { ok: true, state: this.engine.state });
+    } else if (method === "POST" && url === "/api/model") {
+      this.handleModelChange(req, res);
     } else {
       this.jsonResponse(res, 404, { error: "Not found" });
     }
@@ -643,6 +652,26 @@ class HttpDashboardServer {
 
     req.on("close", () => {
       this.sseClients.delete(res);
+    });
+  }
+
+  private handleModelChange(req: http.IncomingMessage, res: http.ServerResponse): void {
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      try {
+        const { model } = JSON.parse(body);
+        if (!model || typeof model !== "string") {
+          this.jsonResponse(res, 400, { error: "Missing 'model' string in body" });
+          return;
+        }
+        this.engine.changeModel(model.trim());
+        this.jsonResponse(res, 200, { ok: true, model: model.trim() });
+      } catch {
+        this.jsonResponse(res, 400, { error: "Invalid JSON body" });
+      }
     });
   }
 
@@ -743,6 +772,7 @@ class RalphController {
     // Engine finished naturally
     await this.server.close();
     closeLogFile();
+    process.exit(0);
   }
 }
 
@@ -753,7 +783,7 @@ function parseArgs(args: string[]): DashboardConfig {
     maxIterations: 5,
     delayMs: 5000,
     promptFile: "PROMPT.md",
-    model: "claude-sonnet-4-5@20250929",
+    model: "claude-sonnet-4-6@default",
     verbose: false,
     logFile: undefined,
     cwd: undefined,
@@ -793,7 +823,7 @@ Options:
   --host=ADDR     Dashboard host (default: 127.0.0.1)
   --iterations=N  Max iterations (default: 5)
   --delay=N       Delay between iterations in ms (default: 5000)
-  --model=NAME    Model to use (default: claude-sonnet-4-5@20250929)
+  --model=NAME    Model to use (default: claude-sonnet-4-6@default)
   --prompt=FILE   Prompt file path (default: PROMPT.md)
   --cwd=DIR       Working directory for Claude tools and prompt file
   --max-cost=N    Stop loop when cost exceeds N USD
@@ -802,8 +832,8 @@ Options:
   --help, -h      Show this help message
 
 Models (Vertex AI):
-  claude-sonnet-4-5@20250929   (default)
-  claude-opus-4-5@20251101
+  claude-sonnet-4-6@default   (default)
+  claude-opus-4-6@default
   claude-haiku-4-5@20251001
 `);
       process.exit(0);

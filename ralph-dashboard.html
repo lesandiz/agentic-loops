@@ -320,6 +320,19 @@
   }
   .sidebar-toggle:hover { background: rgba(255,255,255,0.05); }
 
+  /* Resize handle */
+  .resize-handle {
+    width: 5px;
+    cursor: col-resize;
+    background: var(--border);
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .resize-handle:hover,
+  .resize-handle.active {
+    background: var(--accent);
+  }
+
   /* Responsive: tablet / narrow */
   @media (max-width: 768px) {
     .sidebar-toggle { display: inline-block; }
@@ -329,8 +342,9 @@
       border-bottom: 1px solid var(--border);
       min-height: 40vh;
     }
+    .resize-handle { display: none; }
     .side-panel {
-      width: 100%;
+      width: 100% !important;
       display: none;
       max-height: 50vh;
       overflow-y: auto;
@@ -344,6 +358,38 @@
     .stat-row { font-size: 12px; }
     .footer { padding: 4px 12px; font-size: 10px; }
   }
+
+  /* Model input */
+  .model-input {
+    flex: 1;
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 11px;
+    font-family: inherit;
+    outline: none;
+    min-width: 0;
+  }
+  .model-input:focus { border-color: var(--accent); }
+  .model-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 6px;
+  }
+  .model-preset {
+    padding: 2px 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: inherit;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .model-preset:hover { border-color: var(--accent); color: var(--accent); }
 
   /* Custom scrollbar */
   * {
@@ -412,20 +458,29 @@
     <button class="jump-btn" id="jumpBtn" onclick="jumpToBottom()">Jump to bottom</button>
   </div>
 
-  <div class="side-panel">
+  <div class="resize-handle" id="resizeHandle"></div>
+  <div class="side-panel" id="sidePanel">
     <div class="side-section">
       <div class="section-header" onclick="toggleSection(this)">
         <h3>Progress</h3>
         <span class="section-arrow">&#9660;</span>
       </div>
       <div class="section-body">
-        <div class="stat-row">
-          <span class="stat-label">Model</span>
-          <span class="stat-value" id="modelName">-</span>
+        <div style="margin-bottom:6px">
+          <span class="stat-label" style="display:block;margin-bottom:4px">Model</span>
+          <div style="display:flex;gap:4px">
+            <input type="text" id="modelInput" class="model-input" value="" placeholder="model name">
+            <button class="ctrl-btn primary" style="flex:0;padding:4px 10px;font-size:11px" onclick="doModelChange()">Set</button>
+          </div>
+          <div class="model-presets">
+            <button class="model-preset" onclick="setModel('claude-haiku-4-5@20251001')">haiku-4.5</button>
+            <button class="model-preset" onclick="setModel('claude-sonnet-4-6@default')">sonnet-4.6</button>
+            <button class="model-preset" onclick="setModel('claude-opus-4-6@default')">opus-4.6</button>
+          </div>
         </div>
         <div class="stat-row">
           <span class="stat-label">Iteration</span>
-          <span class="stat-value" id="iterCurrent">0</span>/<span class="stat-value" id="iterMax">-</span>
+          <span><span class="stat-value" id="iterCurrent">0</span>/<span class="stat-value" id="iterMax">-</span></span>
         </div>
         <div class="stat-row">
           <span class="stat-label">Elapsed</span>
@@ -726,6 +781,13 @@
       updateToolFromEvent(JSON.parse(e.data));
     });
 
+    es.addEventListener('model-change', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      const data = JSON.parse(e.data);
+      document.getElementById('modelInput').value = data.model;
+    });
+
     es.addEventListener('steer-ack', function(e) {
       eventCount++;
       document.getElementById('eventCount').textContent = eventCount + ' events';
@@ -771,7 +833,7 @@
       updateIteration(data.iteration);
       updateStats(data.stats);
       if (data.config?.model) {
-        document.getElementById('modelName').textContent = data.config.model;
+        document.getElementById('modelInput').value = data.config.model;
       }
       if (data.config?.maxCostUsd != null) {
         showBudget(data.config.maxCostUsd);
@@ -798,6 +860,33 @@
       fetch('/api/stop', { method: 'POST' }).catch(() => {});
     }
   };
+
+  // Model change
+  window.doModelChange = function() {
+    const input = document.getElementById('modelInput');
+    const model = input.value.trim();
+    if (!model) return;
+
+    fetch('/api/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model })
+    })
+    .then(r => r.json())
+    .catch(() => {});
+  };
+
+  window.setModel = function(model) {
+    document.getElementById('modelInput').value = model;
+    window.doModelChange();
+  };
+
+  document.getElementById('modelInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      window.doModelChange();
+    }
+  });
 
   // Steering
   window.doSteer = function() {
@@ -992,6 +1081,40 @@
     // Re-render chart if its section was just opened
     if (body.id === 'chartBody' && !body.classList.contains('hidden')) renderTokenChart();
   };
+
+  // ─── Panel resize drag ─────────────────────────────────────────────────────
+  (function() {
+    const handle = document.getElementById('resizeHandle');
+    const panel = document.getElementById('sidePanel');
+    let dragging = false;
+
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      dragging = true;
+      handle.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      const containerRight = document.querySelector('.main').getBoundingClientRect().right;
+      const newWidth = Math.max(200, Math.min(600, containerRight - e.clientX));
+      panel.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // Re-render chart after resize
+      if (!document.getElementById('chartBody').classList.contains('hidden')) {
+        renderTokenChart();
+      }
+    });
+  })();
 
   // Resize handler
   window.addEventListener('resize', function() {
