@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ralph Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --orange: #d18616;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .state-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .state-badge .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .state-idle .dot { background: var(--text-dim); }
+  .state-running .dot { background: var(--green); animation: pulse 1.5s infinite; }
+  .state-paused .dot { background: var(--yellow); }
+  .state-stopping .dot { background: var(--orange); animation: pulse 0.5s infinite; }
+  .state-stopped .dot { background: var(--red); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Main layout */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* Log panel */
+  .log-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    min-width: 0;
+  }
+  .log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .filter-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .filter-btn:hover { border-color: var(--text-dim); color: var(--text); }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,0.1); }
+
+  .log-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    position: relative;
+  }
+  .log-entry {
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 1px 0;
+  }
+  .log-entry .ts { color: var(--text-dim); }
+  .log-entry .iter { color: var(--purple); }
+  .log-entry.level-tool .prefix { color: var(--blue); }
+  .log-entry.level-error .prefix { color: var(--red); }
+  .log-entry.level-steer .prefix { color: var(--orange); }
+  .log-entry.level-system .prefix { color: var(--text-dim); }
+  .log-entry.level-agent .prefix { color: var(--green); }
+  .log-entry.level-info .prefix { color: var(--text); }
+
+  .jump-btn {
+    position: absolute;
+    bottom: 12px;
+    right: 20px;
+    padding: 6px 14px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    display: none;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .jump-btn:hover { opacity: 0.9; }
+
+  /* Side panel */
+  .side-panel {
+    width: 300px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    overflow-y: auto;
+  }
+  .side-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .side-section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 13px;
+  }
+  .stat-label { color: var(--text-dim); }
+  .stat-value { color: var(--text); font-weight: 500; }
+
+  .tool-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .tool-tag {
+    padding: 2px 8px;
+    background: rgba(88,166,255,0.1);
+    border: 1px solid rgba(88,166,255,0.2);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--blue);
+  }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .ctrl-btn {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .ctrl-btn:hover { background: rgba(255,255,255,0.05); }
+  .ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .ctrl-btn.danger { border-color: var(--red); color: var(--red); }
+  .ctrl-btn.danger:hover { background: rgba(248,81,73,0.1); }
+  .ctrl-btn.primary { border-color: var(--accent); color: var(--accent); }
+  .ctrl-btn.primary:hover { background: rgba(88,166,255,0.1); }
+
+  /* Steering */
+  .steer-textarea {
+    width: 100%;
+    min-height: 60px;
+    max-height: 120px;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+  }
+  .steer-textarea:focus { border-color: var(--accent); }
+  .steer-textarea::placeholder { color: var(--text-dim); }
+  .steer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+  .steer-hint { font-size: 10px; color: var(--text-dim); }
+
+  /* Footer */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 20px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .conn-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .conn-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+  .conn-dot.disconnected { background: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Ralph Dashboard</h1>
+  <div id="stateBadge" class="state-badge state-idle">
+    <span class="dot"></span>
+    <span id="stateText">idle</span>
+  </div>
+</div>
+
+<div class="main">
+  <div class="log-panel">
+    <div class="log-toolbar">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="tool">Tools</button>
+      <button class="filter-btn" data-filter="agent">Agent</button>
+      <button class="filter-btn" data-filter="steer">Steering</button>
+      <button class="filter-btn" data-filter="system">System</button>
+      <button class="filter-btn" data-filter="error">Errors</button>
+      <span style="flex:1"></span>
+      <button class="filter-btn" onclick="clearLogs()" title="Clear log display">Clear</button>
+    </div>
+    <div class="log-container" id="logContainer">
+      <div class="log-entry level-system"><span class="prefix">Waiting for connection...</span></div>
+    </div>
+    <button class="jump-btn" id="jumpBtn" onclick="jumpToBottom()">Jump to bottom</button>
+  </div>
+
+  <div class="side-panel">
+    <div class="side-section">
+      <h3>Progress</h3>
+      <div class="stat-row">
+        <span class="stat-label">Model</span>
+        <span class="stat-value" id="modelName">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Iteration</span>
+        <span class="stat-value" id="iterCurrent">0</span>/<span class="stat-value" id="iterMax">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Elapsed</span>
+        <span class="stat-value" id="elapsed">00:00:00</span>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <h3>Token Usage</h3>
+      <div class="stat-row">
+        <span class="stat-label">Input</span>
+        <span class="stat-value" id="tokInput">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Output</span>
+        <span class="stat-value" id="tokOutput">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Total</span>
+        <span class="stat-value" id="tokTotal">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Cost</span>
+        <span class="stat-value" id="costUsd">$0.00</span>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <h3>Stats</h3>
+      <div class="stat-row">
+        <span class="stat-label">Subagents</span>
+        <span class="stat-value" id="subagents">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Compactions</span>
+        <span class="stat-value" id="compactions">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Tools</span>
+        <span class="stat-value" id="toolCount">0</span>
+      </div>
+      <div class="tool-list" id="toolList"></div>
+    </div>
+
+    <div class="side-section">
+      <h3>Controls</h3>
+      <div class="controls">
+        <button class="ctrl-btn primary" id="btnPause" onclick="doPause()">Pause</button>
+        <button class="ctrl-btn primary" id="btnResume" onclick="doResume()" disabled>Resume</button>
+        <button class="ctrl-btn danger" id="btnStop" onclick="doStop()">Stop</button>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <h3>Steering</h3>
+      <textarea class="steer-textarea" id="steerInput" placeholder="Enter steering prompt..."></textarea>
+      <div class="steer-actions">
+        <span class="steer-hint">Ctrl+Enter to send</span>
+        <button class="ctrl-btn primary" style="flex:0;padding:6px 16px" onclick="doSteer()">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="conn-status">
+    <span class="conn-dot" id="connDot"></span>
+    <span id="connText">Connected</span>
+  </div>
+  <span id="eventCount">0 events</span>
+</div>
+
+<script>
+(function() {
+  const MAX_LOG_ENTRIES = 2000;
+  let eventCount = 0;
+  let autoScroll = true;
+  let currentFilter = 'all';
+  let startTime = null;
+  let elapsedTimer = null;
+  let toolCalls = {};
+
+  const logContainer = document.getElementById('logContainer');
+  const jumpBtn = document.getElementById('jumpBtn');
+  const connDot = document.getElementById('connDot');
+  const connText = document.getElementById('connText');
+
+  // Auto-scroll tracking
+  logContainer.addEventListener('scroll', function() {
+    const { scrollTop, scrollHeight, clientHeight } = logContainer;
+    const atBottom = scrollHeight - scrollTop - clientHeight < 40;
+    autoScroll = atBottom;
+    jumpBtn.style.display = atBottom ? 'none' : 'block';
+  });
+
+  window.jumpToBottom = function() {
+    logContainer.scrollTop = logContainer.scrollHeight;
+    autoScroll = true;
+    jumpBtn.style.display = 'none';
+  };
+
+  window.clearLogs = function() {
+    logContainer.innerHTML = '';
+    autoScroll = true;
+    jumpBtn.style.display = 'none';
+  };
+
+  function addLogEntry(entry) {
+    const div = document.createElement('div');
+    div.className = `log-entry level-${entry.level}`;
+    div.dataset.level = entry.level;
+    div.innerHTML =
+      `<span class="ts">[${entry.ts}]</span>` +
+      `<span class="iter">[${entry.iteration}]</span> ` +
+      `<span class="prefix">${escapeHtml(entry.prefix)}</span> ` +
+      escapeHtml(entry.msg);
+
+    if (currentFilter !== 'all' && entry.level !== currentFilter) {
+      div.style.display = 'none';
+    }
+
+    logContainer.appendChild(div);
+
+    // Prune old entries
+    while (logContainer.children.length > MAX_LOG_ENTRIES) {
+      logContainer.removeChild(logContainer.firstChild);
+    }
+
+    if (autoScroll) {
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+  }
+
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  function formatNum(n) {
+    return n.toLocaleString();
+  }
+
+  function updateState(state) {
+    const badge = document.getElementById('stateBadge');
+    const text = document.getElementById('stateText');
+    badge.className = `state-badge state-${state}`;
+    text.textContent = state;
+
+    const btnPause = document.getElementById('btnPause');
+    const btnResume = document.getElementById('btnResume');
+    const btnStop = document.getElementById('btnStop');
+
+    btnPause.disabled = state !== 'running';
+    btnResume.disabled = state !== 'paused';
+    btnStop.disabled = state === 'stopped' || state === 'stopping' || state === 'idle';
+
+    if (state === 'running' && !elapsedTimer) {
+      if (!startTime) startTime = Date.now();
+      elapsedTimer = setInterval(updateElapsed, 1000);
+    }
+    if (state === 'stopped' || state === 'idle') {
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
+  }
+
+  function updateElapsed() {
+    if (!startTime) return;
+    const ms = Date.now() - startTime;
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    document.getElementById('elapsed').textContent =
+      [h, m, sec].map(n => n.toString().padStart(2, '0')).join(':');
+  }
+
+  function updateStats(stats) {
+    if (stats.startTime && !startTime) startTime = stats.startTime;
+
+    document.getElementById('tokInput').textContent = formatNum(stats.tokens.inputTokens);
+    document.getElementById('tokOutput').textContent = formatNum(stats.tokens.outputTokens);
+    document.getElementById('tokTotal').textContent = formatNum(
+      stats.tokens.inputTokens + stats.tokens.outputTokens
+    );
+    document.getElementById('costUsd').textContent = '$' + (stats.costUsd || 0).toFixed(4);
+    document.getElementById('subagents').textContent = stats.subagentsSpawned;
+    document.getElementById('compactions').textContent = stats.compactions;
+
+    toolCalls = stats.toolCalls || {};
+    renderToolList();
+  }
+
+  function updateIteration(data) {
+    document.getElementById('iterCurrent').textContent = data.current;
+    document.getElementById('iterMax').textContent = data.max;
+  }
+
+  function renderToolList() {
+    const container = document.getElementById('toolList');
+    const sorted = Object.entries(toolCalls).sort((a, b) => b[1] - a[1]);
+    container.innerHTML = '';
+    let total = 0;
+    for (const [name, count] of sorted) {
+      total += count;
+      const tag = document.createElement('span');
+      tag.className = 'tool-tag';
+      tag.textContent = `${name}(${count})`;
+      container.appendChild(tag);
+    }
+    document.getElementById('toolCount').textContent = total;
+  }
+
+  function updateToolFromEvent(data) {
+    toolCalls[data.name] = (toolCalls[data.name] || 0) + 1;
+    renderToolList();
+  }
+
+  // Filter buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      currentFilter = this.dataset.filter;
+      document.querySelectorAll('.log-entry').forEach(entry => {
+        if (currentFilter === 'all' || entry.dataset.level === currentFilter) {
+          entry.style.display = '';
+        } else {
+          entry.style.display = 'none';
+        }
+      });
+      if (autoScroll) logContainer.scrollTop = logContainer.scrollHeight;
+    });
+  });
+
+  // SSE connection
+  function connect() {
+    const es = new EventSource('/api/events');
+
+    es.addEventListener('log', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      addLogEntry(JSON.parse(e.data));
+    });
+
+    es.addEventListener('state', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      updateState(JSON.parse(e.data).state);
+    });
+
+    es.addEventListener('stats', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      updateStats(JSON.parse(e.data));
+    });
+
+    es.addEventListener('iteration', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      updateIteration(JSON.parse(e.data));
+    });
+
+    es.addEventListener('tool', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      updateToolFromEvent(JSON.parse(e.data));
+    });
+
+    es.addEventListener('steer-ack', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+    });
+
+    es.addEventListener('keepalive', function() {});
+
+    es.onopen = function() {
+      connDot.classList.remove('disconnected');
+      connText.textContent = 'Connected';
+      // Clear waiting message
+      if (logContainer.children.length === 1 && logContainer.firstChild.textContent.includes('Waiting')) {
+        logContainer.innerHTML = '';
+      }
+    };
+
+    es.onerror = function() {
+      connDot.classList.add('disconnected');
+      connText.textContent = 'Reconnecting...';
+    };
+  }
+
+  // Fetch initial state
+  fetch('/api/state')
+    .then(r => r.json())
+    .then(data => {
+      updateState(data.state);
+      updateIteration(data.iteration);
+      updateStats(data.stats);
+      if (data.config?.model) {
+        document.getElementById('modelName').textContent = data.config.model;
+      }
+    })
+    .catch(() => {});
+
+  connect();
+
+  // Controls
+  window.doPause = function() {
+    fetch('/api/pause', { method: 'POST' }).catch(() => {});
+  };
+  window.doResume = function() {
+    fetch('/api/resume', { method: 'POST' }).catch(() => {});
+  };
+  window.doStop = function() {
+    if (confirm('Stop the loop?')) {
+      fetch('/api/stop', { method: 'POST' }).catch(() => {});
+    }
+  };
+
+  // Steering
+  window.doSteer = function() {
+    const textarea = document.getElementById('steerInput');
+    const prompt = textarea.value.trim();
+    if (!prompt) return;
+
+    fetch('/api/steer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) textarea.value = '';
+    })
+    .catch(() => {});
+  };
+
+  document.getElementById('steerInput').addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === 'Enter') {
+      e.preventDefault();
+      window.doSteer();
+    }
+  });
+})();
+</script>
+</body>
+</html>
