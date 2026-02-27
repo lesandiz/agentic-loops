@@ -21,6 +21,7 @@ interface RalphLoopConfig {
 interface DashboardConfig extends RalphLoopConfig {
   port: number;
   host: string;
+  maxCostUsd?: number;
 }
 
 interface TokenUsage {
@@ -48,6 +49,13 @@ interface LogEntry {
   prefix: string;
   msg: string;
   level: "info" | "tool" | "error" | "steer" | "system" | "agent";
+}
+
+interface IterationTokenSummary {
+  iteration: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
 }
 
 interface SteeringItem {
@@ -139,6 +147,7 @@ class LoopEngine extends EventEmitter {
   currentIteration = 0;
   stats: RunStats;
   steeringQueue: SteeringItem[] = [];
+  iterationHistory: IterationTokenSummary[] = [];
 
   private currentQuery: Query | null = null;
   private sessionId: string | null = null;
@@ -147,6 +156,8 @@ class LoopEngine extends EventEmitter {
   private cfg: DashboardConfig;
   private prompt: string;
   private promptDir: string;
+  private iterationTokensSnapshot: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  private iterationCostSnapshot = 0;
 
   constructor(cfg: DashboardConfig, prompt: string, promptDir: string) {
     super();
@@ -199,6 +210,9 @@ class LoopEngine extends EventEmitter {
     if (this.cfg.cwd) this.log("📂", `Working directory: ${this.cfg.cwd}`, "system");
     this.log("📝", `Prompt: ${this.cfg.promptFile}`, "system");
     this.log("🌐", `Dashboard: http://${this.cfg.host}:${this.cfg.port}`, "system");
+    if (this.cfg.maxCostUsd !== undefined) {
+      this.log("💰", `Cost budget: $${this.cfg.maxCostUsd.toFixed(2)}`, "system");
+    }
 
     try {
       await this.runLoop();
@@ -314,6 +328,10 @@ class LoopEngine extends EventEmitter {
       this.emit("iteration", { current: this.currentIteration, max: this.cfg.maxIterations });
       this.log("🔄", `=== Iteration ${i + 1}/${this.cfg.maxIterations} ===`, "system");
 
+      // Snapshot tokens/cost before iteration for per-iteration delta
+      this.iterationTokensSnapshot = { ...this.stats.tokens };
+      this.iterationCostSnapshot = this.stats.costUsd;
+
       // Build prompt — prepend any queued steering
       let iterationPrompt = this.prompt;
       if (this.steeringQueue.length > 0) {
@@ -369,7 +387,23 @@ class LoopEngine extends EventEmitter {
         this.sessionId = null;
       }
 
+      // Record per-iteration token summary
+      const summary: IterationTokenSummary = {
+        iteration: this.currentIteration,
+        inputTokens: this.stats.tokens.inputTokens - this.iterationTokensSnapshot.inputTokens,
+        outputTokens: this.stats.tokens.outputTokens - this.iterationTokensSnapshot.outputTokens,
+        cost: this.stats.costUsd - this.iterationCostSnapshot,
+      };
+      this.iterationHistory.push(summary);
+      this.emit("iteration-summary", summary);
+
       if (this.shouldStop) break;
+
+      // Cost budget check
+      if (this.cfg.maxCostUsd !== undefined && this.stats.costUsd >= this.cfg.maxCostUsd) {
+        this.log("💰", `Cost budget exceeded: $${this.stats.costUsd.toFixed(4)} >= $${this.cfg.maxCostUsd.toFixed(2)} — stopping loop`, "system");
+        break;
+      }
 
       if (i < this.cfg.maxIterations - 1) {
         this.log("⏳", `Waiting ${this.cfg.delayMs}ms before next iteration...`, "system");
@@ -419,16 +453,6 @@ class LoopEngine extends EventEmitter {
         }
       }
 
-      // Token usage on assistant messages
-      const assistantMsg = message as {
-        message?: { usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
-      };
-      if (assistantMsg.message?.usage) {
-        this.stats.tokens.inputTokens += assistantMsg.message.usage.input_tokens || 0;
-        this.stats.tokens.outputTokens += assistantMsg.message.usage.output_tokens || 0;
-        this.stats.tokens.cacheReadTokens += assistantMsg.message.usage.cache_read_input_tokens || 0;
-        this.stats.tokens.cacheCreationTokens += assistantMsg.message.usage.cache_creation_input_tokens || 0;
-      }
     } else if (message.type === "result") {
       const subtype = (message as { subtype?: string }).subtype || "unknown";
       if (subtype === "error_during_execution" && this.steeringJustInjected) {
@@ -517,6 +541,7 @@ class HttpDashboardServer {
     this.engine.on("iteration", (data: { current: number; max: number }) => this.broadcast("iteration", data));
     this.engine.on("tool", (data: { name: string; context: string; iteration: number }) => this.broadcast("tool", data));
     this.engine.on("steer-ack", (data: SteeringItem) => this.broadcast("steer-ack", data));
+    this.engine.on("iteration-summary", (data: IterationTokenSummary) => this.broadcast("iteration-summary", data));
   }
 
   private broadcast(event: string, data: unknown): void {
@@ -591,7 +616,9 @@ class HttpDashboardServer {
         delayMs: this.cfg.delayMs,
         promptFile: this.cfg.promptFile,
         cwd: this.cfg.cwd,
+        maxCostUsd: this.cfg.maxCostUsd,
       },
+      iterationHistory: this.engine.iterationHistory,
     });
   }
 
@@ -606,6 +633,11 @@ class HttpDashboardServer {
     res.write(`event: state\ndata: ${JSON.stringify({ state: this.engine.state })}\n\n`);
     res.write(`event: iteration\ndata: ${JSON.stringify({ current: this.engine.currentIteration, max: this.cfg.maxIterations })}\n\n`);
     res.write(`event: stats\ndata: ${JSON.stringify(this.engine.stats)}\n\n`);
+
+    // Send iteration history for chart
+    if (this.engine.iterationHistory.length > 0) {
+      res.write(`event: iteration-history\ndata: ${JSON.stringify(this.engine.iterationHistory)}\n\n`);
+    }
 
     this.sseClients.add(res);
 
@@ -748,6 +780,8 @@ function parseArgs(args: string[]): DashboardConfig {
       cfg.port = parseInt(arg.split("=")[1]);
     } else if (arg.startsWith("--host=")) {
       cfg.host = arg.split("=")[1];
+    } else if (arg.startsWith("--max-cost=")) {
+      cfg.maxCostUsd = parseFloat(arg.split("=")[1]);
     } else if (arg === "--help" || arg === "-h") {
       console.log(`
 ralph-loop-dashboard - Run Claude agents in a loop with a live dashboard
@@ -762,6 +796,7 @@ Options:
   --model=NAME    Model to use (default: claude-sonnet-4-5@20250929)
   --prompt=FILE   Prompt file path (default: PROMPT.md)
   --cwd=DIR       Working directory for Claude tools and prompt file
+  --max-cost=N    Stop loop when cost exceeds N USD
   --verbose, -v   Enable verbose output
   --log=FILE      Write logs to file
   --help, -h      Show this help message

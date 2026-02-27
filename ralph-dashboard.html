@@ -162,6 +162,7 @@
   .side-section {
     padding: 16px;
     border-bottom: 1px solid var(--border);
+    position: relative;
   }
   .side-section h3 {
     font-size: 11px;
@@ -268,15 +269,128 @@
     background: var(--green);
   }
   .conn-dot.disconnected { background: var(--red); }
+
+  /* Collapsible sections */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-header h3 { margin-bottom: 0; }
+  .section-arrow {
+    font-size: 12px;
+    color: var(--text-dim);
+    transition: transform 0.2s;
+  }
+  .section-arrow.collapsed { transform: rotate(-90deg); }
+  .section-body { margin-top: 10px; }
+  .section-body.hidden { display: none; }
+  #tokenChart { width: 100%; height: 180px; display: block; }
+  .chart-tooltip {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 11px;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    white-space: nowrap;
+    color: var(--text);
+  }
+
+  /* Budget colors */
+  .budget-warn { color: var(--yellow) !important; }
+  .budget-danger { color: var(--red) !important; }
+
+  /* Sidebar toggle (hidden on desktop) */
+  .sidebar-toggle {
+    display: none;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .sidebar-toggle:hover { background: rgba(255,255,255,0.05); }
+
+  /* Responsive: tablet / narrow */
+  @media (max-width: 768px) {
+    .sidebar-toggle { display: inline-block; }
+    .main { flex-direction: column; }
+    .log-panel {
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      min-height: 40vh;
+    }
+    .side-panel {
+      width: 100%;
+      display: none;
+      max-height: 50vh;
+      overflow-y: auto;
+    }
+    .side-panel.visible { display: flex; flex-direction: column; }
+    .header { padding: 8px 12px; }
+    .header h1 { font-size: 14px; }
+    .log-toolbar { overflow-x: auto; flex-wrap: nowrap; }
+    .filter-btn { flex-shrink: 0; }
+    .side-section { padding: 12px; }
+    .stat-row { font-size: 12px; }
+    .footer { padding: 4px 12px; font-size: 10px; }
+  }
+
+  /* Custom scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139,148,158,0.3) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(139,148,158,0.25);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(139,148,158,0.5);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Responsive: phone */
+  @media (max-width: 480px) {
+    .header h1 { font-size: 12px; }
+    .state-badge { font-size: 10px; padding: 3px 8px; }
+    .log-container { font-size: 11px; padding: 6px 8px; }
+    .side-section { padding: 8px; }
+    .side-section h3 { font-size: 10px; }
+    .stat-row { font-size: 11px; }
+    .ctrl-btn { font-size: 11px; padding: 6px; }
+    #tokenChart { height: 140px; }
+  }
 </style>
 </head>
 <body>
 
 <div class="header">
   <h1>Ralph Dashboard</h1>
-  <div id="stateBadge" class="state-badge state-idle">
-    <span class="dot"></span>
-    <span id="stateText">idle</span>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button class="sidebar-toggle" onclick="toggleSidebar()">Panel</button>
+    <div id="stateBadge" class="state-badge state-idle">
+      <span class="dot"></span>
+      <span id="stateText">idle</span>
+    </div>
   </div>
 </div>
 
@@ -300,56 +414,90 @@
 
   <div class="side-panel">
     <div class="side-section">
-      <h3>Progress</h3>
-      <div class="stat-row">
-        <span class="stat-label">Model</span>
-        <span class="stat-value" id="modelName">-</span>
+      <div class="section-header" onclick="toggleSection(this)">
+        <h3>Progress</h3>
+        <span class="section-arrow">&#9660;</span>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Iteration</span>
-        <span class="stat-value" id="iterCurrent">0</span>/<span class="stat-value" id="iterMax">-</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Elapsed</span>
-        <span class="stat-value" id="elapsed">00:00:00</span>
-      </div>
-    </div>
-
-    <div class="side-section">
-      <h3>Token Usage</h3>
-      <div class="stat-row">
-        <span class="stat-label">Input</span>
-        <span class="stat-value" id="tokInput">0</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Output</span>
-        <span class="stat-value" id="tokOutput">0</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Total</span>
-        <span class="stat-value" id="tokTotal">0</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Cost</span>
-        <span class="stat-value" id="costUsd">$0.00</span>
+      <div class="section-body">
+        <div class="stat-row">
+          <span class="stat-label">Model</span>
+          <span class="stat-value" id="modelName">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Iteration</span>
+          <span class="stat-value" id="iterCurrent">0</span>/<span class="stat-value" id="iterMax">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Elapsed</span>
+          <span class="stat-value" id="elapsed">00:00:00</span>
+        </div>
       </div>
     </div>
 
     <div class="side-section">
-      <h3>Stats</h3>
-      <div class="stat-row">
-        <span class="stat-label">Subagents</span>
-        <span class="stat-value" id="subagents">0</span>
+      <div class="section-header" onclick="toggleSection(this)">
+        <h3>Token Usage</h3>
+        <span class="section-arrow">&#9660;</span>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Compactions</span>
-        <span class="stat-value" id="compactions">0</span>
+      <div class="section-body">
+        <div class="stat-row">
+          <span class="stat-label">Input</span>
+          <span class="stat-value" id="tokInput">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Output</span>
+          <span class="stat-value" id="tokOutput">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Total</span>
+          <span class="stat-value" id="tokTotal">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Cost</span>
+          <span class="stat-value" id="costUsd">$0.00</span>
+        </div>
+        <div class="stat-row" id="budgetRow" style="display:none">
+          <span class="stat-label">Budget</span>
+          <span class="stat-value" id="budgetUsd">-</span>
+        </div>
+        <div class="stat-row" id="remainingRow" style="display:none">
+          <span class="stat-label">Remaining</span>
+          <span class="stat-value" id="remainingUsd">-</span>
+        </div>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Tools</span>
-        <span class="stat-value" id="toolCount">0</span>
+    </div>
+
+    <div class="side-section">
+      <div class="section-header" onclick="toggleSection(this)">
+        <h3>Token Chart</h3>
+        <span class="section-arrow">&#9660;</span>
       </div>
-      <div class="tool-list" id="toolList"></div>
+      <div class="section-body" id="chartBody">
+        <canvas id="tokenChart"></canvas>
+        <div class="chart-tooltip" id="chartTooltip"></div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="section-header" onclick="toggleSection(this)">
+        <h3>Stats</h3>
+        <span class="section-arrow">&#9660;</span>
+      </div>
+      <div class="section-body">
+        <div class="stat-row">
+          <span class="stat-label">Subagents</span>
+          <span class="stat-value" id="subagents">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Compactions</span>
+          <span class="stat-value" id="compactions">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Tools</span>
+          <span class="stat-value" id="toolCount">0</span>
+        </div>
+        <div class="tool-list" id="toolList"></div>
+      </div>
     </div>
 
     <div class="side-section">
@@ -499,6 +647,7 @@
 
     toolCalls = stats.toolCalls || {};
     renderToolList();
+    updateBudgetRemaining(stats.costUsd || 0);
   }
 
   function updateIteration(data) {
@@ -582,6 +731,21 @@
       document.getElementById('eventCount').textContent = eventCount + ' events';
     });
 
+    es.addEventListener('iteration-summary', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      const summary = JSON.parse(e.data);
+      iterationHistory.push(summary);
+      renderTokenChart();
+    });
+
+    es.addEventListener('iteration-history', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      iterationHistory = JSON.parse(e.data);
+      renderTokenChart();
+    });
+
     es.addEventListener('keepalive', function() {});
 
     es.onopen = function() {
@@ -608,6 +772,14 @@
       updateStats(data.stats);
       if (data.config?.model) {
         document.getElementById('modelName').textContent = data.config.model;
+      }
+      if (data.config?.maxCostUsd != null) {
+        showBudget(data.config.maxCostUsd);
+        updateBudgetRemaining(data.stats?.costUsd || 0);
+      }
+      if (data.iterationHistory && data.iterationHistory.length > 0) {
+        iterationHistory = data.iterationHistory;
+        renderTokenChart();
       }
     })
     .catch(() => {});
@@ -649,6 +821,182 @@
     if (e.ctrlKey && e.key === 'Enter') {
       e.preventDefault();
       window.doSteer();
+    }
+  });
+
+  // ─── Sidebar toggle (responsive) ───────────────────────────────────────────
+  window.toggleSidebar = function() {
+    document.querySelector('.side-panel').classList.toggle('visible');
+  };
+
+  // ─── Budget display ────────────────────────────────────────────────────────
+  let maxCostUsd = null;
+
+  function showBudget(budget) {
+    if (budget == null) return;
+    maxCostUsd = budget;
+    document.getElementById('budgetRow').style.display = '';
+    document.getElementById('remainingRow').style.display = '';
+    document.getElementById('budgetUsd').textContent = '$' + budget.toFixed(2);
+  }
+
+  function updateBudgetRemaining(cost) {
+    if (maxCostUsd == null) return;
+    const remaining = Math.max(0, maxCostUsd - cost);
+    const el = document.getElementById('remainingUsd');
+    el.textContent = '$' + remaining.toFixed(4);
+    el.classList.remove('budget-warn', 'budget-danger');
+    const pct = remaining / maxCostUsd;
+    if (pct < 0.10) el.classList.add('budget-danger');
+    else if (pct < 0.25) el.classList.add('budget-warn');
+  }
+
+  // ─── Token Chart ───────────────────────────────────────────────────────────
+  let iterationHistory = [];
+  const canvas = document.getElementById('tokenChart');
+  const ctx = canvas.getContext('2d');
+  const tooltip = document.getElementById('chartTooltip');
+
+  function compactLabel(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'K';
+    return n.toString();
+  }
+
+  function renderTokenChart() {
+    if (iterationHistory.length === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+
+    const W = rect.width, H = rect.height;
+    const pad = { top: 24, right: 10, bottom: 24, left: 40 };
+    const chartW = W - pad.left - pad.right;
+    const chartH = H - pad.top - pad.bottom;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Compute max
+    let maxVal = 0;
+    for (const d of iterationHistory) {
+      const total = d.inputTokens + d.outputTokens;
+      if (total > maxVal) maxVal = total;
+    }
+    if (maxVal === 0) maxVal = 1;
+    // Round up for nice axis
+    const mag = Math.pow(10, Math.floor(Math.log10(maxVal)));
+    maxVal = Math.ceil(maxVal / mag) * mag;
+
+    const barCount = iterationHistory.length;
+    const barW = Math.max(4, Math.min(30, (chartW - barCount * 2) / barCount));
+    const gap = Math.max(1, (chartW - barW * barCount) / (barCount + 1));
+
+    // Y axis gridlines + labels
+    ctx.strokeStyle = 'rgba(48,54,61,0.6)';
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    const ticks = 4;
+    for (let t = 0; t <= ticks; t++) {
+      const val = (maxVal / ticks) * t;
+      const y = pad.top + chartH - (val / maxVal) * chartH;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, y);
+      ctx.lineTo(W - pad.right, y);
+      ctx.stroke();
+      ctx.fillText(compactLabel(Math.round(val)), pad.left - 4, y + 3);
+    }
+
+    // Bars
+    for (let i = 0; i < barCount; i++) {
+      const d = iterationHistory[i];
+      const x = pad.left + gap + i * (barW + gap);
+      const inputH = (d.inputTokens / maxVal) * chartH;
+      const outputH = (d.outputTokens / maxVal) * chartH;
+
+      // Input (purple) — bottom
+      ctx.fillStyle = '#bc8cff';
+      ctx.fillRect(x, pad.top + chartH - inputH - outputH, barW, inputH);
+
+      // Output (blue) — top
+      ctx.fillStyle = '#58a6ff';
+      ctx.fillRect(x, pad.top + chartH - outputH, barW, outputH);
+
+      // X label
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(d.iteration.toString(), x + barW / 2, H - pad.bottom + 14);
+    }
+
+    // Legend
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#bc8cff';
+    ctx.fillRect(pad.left + 2, 4, 10, 10);
+    ctx.fillStyle = '#c9d1d9';
+    ctx.fillText('Input', pad.left + 16, 13);
+    ctx.fillStyle = '#58a6ff';
+    ctx.fillRect(pad.left + 60, 4, 10, 10);
+    ctx.fillStyle = '#c9d1d9';
+    ctx.fillText('Output', pad.left + 74, 13);
+  }
+
+  // Tooltip on hover
+  canvas.addEventListener('mousemove', function(e) {
+    if (iterationHistory.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const W = rect.width;
+    const pad = { top: 24, right: 10, bottom: 24, left: 40 };
+    const chartW = W - pad.left - pad.right;
+    const barCount = iterationHistory.length;
+    const barW = Math.max(4, Math.min(30, (chartW - barCount * 2) / barCount));
+    const gap = Math.max(1, (chartW - barW * barCount) / (barCount + 1));
+
+    let idx = -1;
+    for (let i = 0; i < barCount; i++) {
+      const x = pad.left + gap + i * (barW + gap);
+      if (mx >= x && mx <= x + barW) { idx = i; break; }
+    }
+
+    if (idx >= 0) {
+      const d = iterationHistory[idx];
+      tooltip.innerHTML =
+        `<b>Iteration ${d.iteration}</b><br>` +
+        `Input: ${formatNum(d.inputTokens)}<br>` +
+        `Output: ${formatNum(d.outputTokens)}<br>` +
+        `Cost: $${d.cost.toFixed(4)}`;
+      tooltip.style.display = 'block';
+      // Position tooltip relative to side-panel
+      const sp = canvas.closest('.side-section').getBoundingClientRect();
+      tooltip.style.left = (e.clientX - sp.left + 12) + 'px';
+      tooltip.style.top = (e.clientY - sp.top - 30) + 'px';
+    } else {
+      tooltip.style.display = 'none';
+    }
+  });
+
+  canvas.addEventListener('mouseleave', function() {
+    tooltip.style.display = 'none';
+  });
+
+  // Generic section toggle
+  window.toggleSection = function(headerEl) {
+    const body = headerEl.nextElementSibling;
+    const arrow = headerEl.querySelector('.section-arrow');
+    body.classList.toggle('hidden');
+    if (arrow) arrow.classList.toggle('collapsed');
+    // Re-render chart if its section was just opened
+    if (body.id === 'chartBody' && !body.classList.contains('hidden')) renderTokenChart();
+  };
+
+  // Resize handler
+  window.addEventListener('resize', function() {
+    if (!document.getElementById('chartBody').classList.contains('hidden')) {
+      renderTokenChart();
     }
   });
 })();
