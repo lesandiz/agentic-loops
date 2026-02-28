@@ -18,7 +18,7 @@ This is the accompaning repo for the article [The Human On the Loop: A Practical
 
 ## Demo
 
-<video src="assets/demo.mp4" controls autoplay loop muted width="100%"></video>
+<video src="https://github.com/user-attachments/assets/4c854fbb-c167-44a6-b1be-acbf2de762cd" controls autoplay loop muted width="100%"></video>
 
 ### Try it yourself
 
