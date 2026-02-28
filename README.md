@@ -18,7 +18,7 @@ This is the accompaning repo for the article [The Human On the Loop: A Practical
 
 ## Demo
 
-![Dashboard Demo](assets/chrome_zzpbQ9czBZ.gif)
+<video src="assets/demo.mp4" controls autoplay loop muted width="100%"></video>
 
 ### Try it yourself
 
@@ -43,7 +43,7 @@ Two additional CLI scripts are included for simpler use cases or alternative bac
 ## Features
 
 - 🌐 **Live HTTP Dashboard** — Real-time SSE updates in a browser UI
-- ⏯️ **Pause / Resume / Stop Controls** — Manage the loop from the dashboard
+- 🛑 **Stop Control** — Stop the loop from the dashboard header
 - 🎯 **Mid-iteration & Between-iteration Steering** — Inject prompts while the agent is running or between iterations
 - 🔄 **Runtime Model Switching** — Switch between haiku/sonnet/opus presets without restarting
 - 💰 **Cost Budget Management** — Set a max cost and auto-stop when the budget is reached
@@ -82,7 +82,7 @@ The loop runs in the terminal with full console output. The HTTP server starts a
 
 ## Dashboard Controls
 
-- **Pause / Resume / Stop** — Control buttons to manage the loop execution
+- **Stop** — Stop button in the header bar to halt the loop
 - **Steering textarea** — Send prompts to the agent mid-iteration (interrupts and injects) or between iterations (prepended to the next prompt)
 - **Model switching** — Change the Claude model at runtime; takes effect on the next iteration
 - **Log filtering** — Filter logs by category: all, tools, agent, steering, system, errors
