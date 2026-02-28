@@ -462,21 +462,9 @@
     <div class="side-section">
       <div class="section-header" onclick="toggleSection(this)">
         <h3>Progress</h3>
-        <span class="section-arrow">&#9660;</span>
+        <span class="section-arrow collapsed">&#9660;</span>
       </div>
-      <div class="section-body">
-        <div style="margin-bottom:6px">
-          <span class="stat-label" style="display:block;margin-bottom:4px">Model</span>
-          <div style="display:flex;gap:4px">
-            <input type="text" id="modelInput" class="model-input" value="" placeholder="model name">
-            <button class="ctrl-btn primary" style="flex:0;padding:4px 10px;font-size:11px" onclick="doModelChange()">Set</button>
-          </div>
-          <div class="model-presets">
-            <button class="model-preset" onclick="setModel('claude-haiku-4-5@20251001')">haiku-4.5</button>
-            <button class="model-preset" onclick="setModel('claude-sonnet-4-6@default')">sonnet-4.6</button>
-            <button class="model-preset" onclick="setModel('claude-opus-4-6@default')">opus-4.6</button>
-          </div>
-        </div>
+      <div class="section-body hidden">
         <div class="stat-row">
           <span class="stat-label">Iteration</span>
           <span><span class="stat-value" id="iterCurrent">0</span>/<span class="stat-value" id="iterMax">-</span></span>
@@ -490,10 +478,28 @@
 
     <div class="side-section">
       <div class="section-header" onclick="toggleSection(this)">
-        <h3>Token Usage</h3>
-        <span class="section-arrow">&#9660;</span>
+        <h3>Model</h3>
+        <span class="section-arrow collapsed">&#9660;</span>
       </div>
-      <div class="section-body">
+      <div class="section-body hidden">
+        <div style="display:flex;gap:4px">
+          <input type="text" id="modelInput" class="model-input" value="" placeholder="model name">
+          <button class="ctrl-btn primary" style="flex:0;padding:4px 10px;font-size:11px" onclick="doModelChange()">Set</button>
+        </div>
+        <div class="model-presets">
+          <button class="model-preset" onclick="setModel('claude-haiku-4-5@20251001')">haiku-4.5</button>
+          <button class="model-preset" onclick="setModel('claude-sonnet-4-6@default')">sonnet-4.6</button>
+          <button class="model-preset" onclick="setModel('claude-opus-4-6@default')">opus-4.6</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="section-header" onclick="toggleSection(this)">
+        <h3>Token Usage</h3>
+        <span class="section-arrow collapsed">&#9660;</span>
+      </div>
+      <div class="section-body hidden">
         <div class="stat-row">
           <span class="stat-label">Input</span>
           <span class="stat-value" id="tokInput">0</span>
@@ -535,9 +541,9 @@
     <div class="side-section">
       <div class="section-header" onclick="toggleSection(this)">
         <h3>Stats</h3>
-        <span class="section-arrow">&#9660;</span>
+        <span class="section-arrow collapsed">&#9660;</span>
       </div>
-      <div class="section-body">
+      <div class="section-body hidden">
         <div class="stat-row">
           <span class="stat-label">Subagents</span>
           <span class="stat-value" id="subagents">0</span>
