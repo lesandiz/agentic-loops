@@ -1,5 +1,6 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { EventEmitter } from "events";
+import * as dns from "dns";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
@@ -41,7 +42,7 @@ interface RunStats {
   costUsd: number;
 }
 
-type EngineState = "idle" | "running" | "paused" | "stopping" | "stopped";
+type EngineState = "idle" | "running" | "stopping" | "stopped";
 
 interface LogEntry {
   ts: string;
@@ -143,6 +144,9 @@ function writeToLogFile(line: string): void {
 // ─── LoopEngine ───────────────────────────────────────────────────────────────
 
 class LoopEngine extends EventEmitter {
+  private static readonly MAX_RETRIES = 3;
+  private static readonly RETRY_DELAY_MS = 10_000;
+
   state: EngineState = "idle";
   currentIteration = 0;
   stats: RunStats;
@@ -151,7 +155,6 @@ class LoopEngine extends EventEmitter {
 
   private currentQuery: Query | null = null;
   private sessionId: string | null = null;
-  private pauseResolve: (() => void) | null = null;
   private steeringJustInjected = false;
   private cfg: DashboardConfig;
   private prompt: string;
@@ -203,6 +206,40 @@ class LoopEngine extends EventEmitter {
     }
   }
 
+  private isTransientError(err: unknown): boolean {
+    const msg = String(err).toLowerCase();
+    const networkPatterns = [
+      "enotfound", "econnrefused", "econnreset", "etimedout", "epipe",
+      "socket hang up", "network", "getaddrinfo",
+    ];
+    if (networkPatterns.some((p) => msg.includes(p))) return true;
+
+    // HTTP status codes embedded in error messages
+    const httpMatch = msg.match(/\b(429|500|502|503|504)\b/);
+    if (httpMatch) return true;
+
+    return false;
+  }
+
+  private async healthCheck(): Promise<void> {
+    const { MAX_RETRIES, RETRY_DELAY_MS } = LoopEngine;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await dns.promises.resolve("oauth2.googleapis.com");
+        return; // DNS resolved successfully
+      } catch (err) {
+        this.log("⚠️", `Health check failed (attempt ${attempt}/${MAX_RETRIES}): ${err}`, "error");
+        if (attempt < MAX_RETRIES) {
+          const delay = RETRY_DELAY_MS * attempt;
+          this.log("⏳", `Waiting ${delay}ms before next health check...`, "system");
+          await sleep(delay);
+        } else {
+          this.log("⚠️", `Health check failed after ${MAX_RETRIES} attempts, proceeding anyway`, "error");
+        }
+      }
+    }
+  }
+
   async start(): Promise<void> {
     this.setState("running");
     this.log("🚀", `Starting ralph loop: max ${this.cfg.maxIterations} iterations, ${this.cfg.delayMs}ms delay`, "system");
@@ -226,32 +263,10 @@ class LoopEngine extends EventEmitter {
     }
   }
 
-  pause(): void {
-    if (this.state === "running") {
-      this.setState("paused");
-      this.log("⏸️", "Loop paused", "system");
-    }
-  }
-
-  resume(): void {
-    if (this.state === "paused") {
-      this.setState("running");
-      this.log("▶️", "Loop resumed", "system");
-      if (this.pauseResolve) {
-        this.pauseResolve();
-        this.pauseResolve = null;
-      }
-    }
-  }
-
   stop(): void {
-    if (this.state === "running" || this.state === "paused") {
+    if (this.state === "running") {
       this.setState("stopping");
       this.log("🛑", "Stopping loop...", "system");
-      if (this.pauseResolve) {
-        this.pauseResolve();
-        this.pauseResolve = null;
-      }
       if (this.currentQuery) {
         this.currentQuery.close();
         this.currentQuery = null;
@@ -347,50 +362,58 @@ class LoopEngine extends EventEmitter {
         this.log("🎯", `Prepended ${pending.length} steering directive(s) to prompt`, "steer");
       }
 
-      // Fresh session each iteration
-      this.sessionId = null;
-      this.currentQuery = query({
-        prompt: iterationPrompt,
-        options: {
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          model: this.cfg.model,
-          cwd: this.cfg.cwd,
-          executable: "node",
-          settingSources: ["project", "user"],
-          allowedTools: [
-            "Task", "Bash", "Glob", "Grep", "LS", "ExitPlanMode", "Read", "Edit", "MultiEdit", "Write",
-            "NotebookEdit", "WebFetch", "TodoWrite", "WebSearch", "BashOutput", "KillBash",
-          ],
-        },
-      });
+      // Pre-iteration health check
+      await this.healthCheck();
 
-      try {
-        for await (const message of this.currentQuery) {
+      const { MAX_RETRIES, RETRY_DELAY_MS } = LoopEngine;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        // Fresh session each attempt
+        this.sessionId = null;
+        this.currentQuery = query({
+          prompt: iterationPrompt,
+          options: {
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            model: this.cfg.model,
+            cwd: this.cfg.cwd,
+            executable: "node",
+            settingSources: ["project", "user"],
+            allowedTools: [
+              "Task", "Bash", "Glob", "Grep", "LS", "ExitPlanMode", "Read", "Edit", "MultiEdit", "Write",
+              "NotebookEdit", "WebFetch", "TodoWrite", "WebSearch", "BashOutput", "KillBash",
+            ],
+          },
+        });
+
+        try {
+          for await (const message of this.currentQuery) {
+            if (this.shouldStop) break;
+
+            this.processMessage(message);
+
+            // Mid-iteration steering: interrupt + inject, then continue receiving messages
+            if (this.steeringQueue.length > 0 && this.state === "running" && this.currentQuery) {
+              await this.injectSteering(this.currentQuery);
+            }
+          }
+          break; // Success — exit retry loop
+        } catch (err) {
           if (this.shouldStop) break;
 
-          this.processMessage(message);
-
-          // Mid-iteration steering: interrupt + inject, then continue receiving messages
-          if (this.steeringQueue.length > 0 && this.state === "running" && this.currentQuery) {
-            await this.injectSteering(this.currentQuery);
+          if (this.isTransientError(err) && attempt < MAX_RETRIES) {
+            const delay = RETRY_DELAY_MS * attempt;
+            this.log("⚠️", `Transient error on iteration ${i + 1}, attempt ${attempt}/${MAX_RETRIES}: ${err}`, "error");
+            this.emit("retry", { iteration: this.currentIteration, attempt, maxRetries: MAX_RETRIES, error: String(err) });
+            this.log("⏳", `Retrying in ${delay}ms...`, "system");
+            await sleep(delay);
+          } else {
+            this.log("❌", `Iteration ${i + 1} error (attempt ${attempt}/${MAX_RETRIES}): ${err}`, "error");
+            break; // Non-transient or retries exhausted
           }
-
-          // Pause check
-          if (this.state === "paused") {
-            await new Promise<void>((resolve) => {
-              this.pauseResolve = resolve;
-            });
-            if (this.shouldStop) break;
-          }
+        } finally {
+          this.currentQuery = null;
+          this.sessionId = null;
         }
-      } catch (err) {
-        if (!this.shouldStop) {
-          this.log("❌", `Iteration ${i + 1} error: ${err}`, "error");
-        }
-      } finally {
-        this.currentQuery = null;
-        this.sessionId = null;
       }
 
       // Record per-iteration token summary
@@ -549,6 +572,7 @@ class HttpDashboardServer {
     this.engine.on("steer-ack", (data: SteeringItem) => this.broadcast("steer-ack", data));
     this.engine.on("iteration-summary", (data: IterationTokenSummary) => this.broadcast("iteration-summary", data));
     this.engine.on("model-change", (data: { model: string }) => this.broadcast("model-change", data));
+    this.engine.on("retry", (data: { iteration: number; attempt: number; maxRetries: number; error: string }) => this.broadcast("retry", data));
   }
 
   private broadcast(event: string, data: unknown): void {
@@ -586,12 +610,6 @@ class HttpDashboardServer {
       this.serveSSE(req, res);
     } else if (method === "POST" && url === "/api/steer") {
       this.handleSteer(req, res);
-    } else if (method === "POST" && url === "/api/pause") {
-      this.engine.pause();
-      this.jsonResponse(res, 200, { ok: true, state: this.engine.state });
-    } else if (method === "POST" && url === "/api/resume") {
-      this.engine.resume();
-      this.jsonResponse(res, 200, { ok: true, state: this.engine.state });
     } else if (method === "POST" && url === "/api/stop") {
       this.engine.stop();
       this.jsonResponse(res, 200, { ok: true, state: this.engine.state });

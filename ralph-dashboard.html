@@ -64,7 +64,6 @@
   }
   .state-idle .dot { background: var(--text-dim); }
   .state-running .dot { background: var(--green); animation: pulse 1.5s infinite; }
-  .state-paused .dot { background: var(--yellow); }
   .state-stopping .dot { background: var(--orange); animation: pulse 0.5s infinite; }
   .state-stopped .dot { background: var(--red); }
 
@@ -558,8 +557,6 @@
     <div class="side-section">
       <h3>Controls</h3>
       <div class="controls">
-        <button class="ctrl-btn primary" id="btnPause" onclick="doPause()">Pause</button>
-        <button class="ctrl-btn primary" id="btnResume" onclick="doResume()" disabled>Resume</button>
         <button class="ctrl-btn danger" id="btnStop" onclick="doStop()">Stop</button>
       </div>
     </div>
@@ -660,12 +657,7 @@
     badge.className = `state-badge state-${state}`;
     text.textContent = state;
 
-    const btnPause = document.getElementById('btnPause');
-    const btnResume = document.getElementById('btnResume');
     const btnStop = document.getElementById('btnStop');
-
-    btnPause.disabled = state !== 'running';
-    btnResume.disabled = state !== 'paused';
     btnStop.disabled = state === 'stopped' || state === 'stopping' || state === 'idle';
 
     if (state === 'running' && !elapsedTimer) {
@@ -849,12 +841,6 @@
   connect();
 
   // Controls
-  window.doPause = function() {
-    fetch('/api/pause', { method: 'POST' }).catch(() => {});
-  };
-  window.doResume = function() {
-    fetch('/api/resume', { method: 'POST' }).catch(() => {});
-  };
   window.doStop = function() {
     if (confirm('Stop the loop?')) {
       fetch('/api/stop', { method: 'POST' }).catch(() => {});
