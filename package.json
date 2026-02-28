@@ -5,7 +5,7 @@
   "scripts": {
     "ralph:claude": "npx tsx ralph-loop-claude.ts",
     "ralph:copilot": "npx tsx ralph-loop-copilot.ts",
-    "ralph:dashboard": "npx tsx ralph-loop-dashboard.ts"
+    "ralph:dashboard": "npx tsx ralph-loop-claude-dashboard.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "*",

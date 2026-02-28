@@ -26,14 +26,14 @@ This is the accompaning repo for the article [The Human On the Loop: A Practical
 git clone https://github.com/lesandiz/agentic-loops.git
 cd agentic-loops
 npm install
-npx tsx ralph-loop-dashboard.ts --iterations=3 --port=3333 --prompt=SIMPLE_PROMPT.md --cwd=example/ --max-cost=0.50 --model=claude-haiku-4-5@20251001
+npx tsx ralph-loop-claude-dashboard.ts --iterations=3 --port=3333 --prompt=SIMPLE_PROMPT.md --cwd=example/ --max-cost=0.50 --model=claude-haiku-4-5@20251001
 ```
 
 Then open `http://localhost:3333` in your browser to see the live dashboard.
 
 ## Overview
 
-The main implementation is **`ralph-loop-dashboard.ts`** — it runs Claude agents in a loop with full terminal output and optionally serves a live HTTP dashboard for real-time monitoring, mid-iteration steering, runtime model switching, and cost budget management. The dashboard is a bonus — the loop runs and logs to the terminal regardless of whether you open the browser.
+The main implementation is **`ralph-loop-claude-dashboard.ts`** — built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk), it runs Claude agents in a loop with full terminal output and optionally serves a live HTTP dashboard for real-time monitoring, mid-iteration steering, runtime model switching, and cost budget management. The dashboard is a bonus — the loop runs and logs to the terminal regardless of whether you open the browser.
 
 Two additional CLI scripts are included for simpler use cases or alternative backends:
 
@@ -65,7 +65,7 @@ npm install
 npm run ralph:dashboard
 
 # Full example with all options
-npx tsx ralph-loop-dashboard.ts \
+npx tsx ralph-loop-claude-dashboard.ts \
   --iterations=10 \
   --delay=5000 \
   --model=claude-sonnet-4-6@default \

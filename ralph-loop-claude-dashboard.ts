@@ -621,7 +621,7 @@ class HttpDashboardServer {
   }
 
   private serveDashboard(res: http.ServerResponse): void {
-    const htmlPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "ralph-dashboard.html");
+    const htmlPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "ralph-claude-dashboard.html");
     try {
       const html = fs.readFileSync(htmlPath, "utf-8");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -832,9 +832,9 @@ function parseArgs(args: string[]): DashboardConfig {
       cfg.maxCostUsd = parseFloat(arg.split("=")[1]);
     } else if (arg === "--help" || arg === "-h") {
       console.log(`
-ralph-loop-dashboard - Run Claude agents in a loop with a live dashboard
+ralph-loop-claude-dashboard - Run Claude agents in a loop with a live dashboard
 
-Usage: npx tsx ralph-loop-dashboard.ts [options]
+Usage: npx tsx ralph-loop-claude-dashboard.ts [options]
 
 Options:
   --port=N        Dashboard port (default: 3333)
