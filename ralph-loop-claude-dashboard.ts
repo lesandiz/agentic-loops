@@ -103,15 +103,15 @@ function formatToolContext(toolName: string, input: Record<string, unknown> | un
     case "MultiEdit":
       return input.file_path ? ` → ${basename(String(input.file_path))}` : "";
     case "Bash":
-      return input.command ? ` → ${truncate(String(input.command), 80)}` : "";
+      return input.command ? ` → ${truncate(String(input.command), 160)}` : "";
     case "Glob":
       return input.pattern ? ` → ${String(input.pattern)}` : "";
     case "Grep":
-      return input.pattern ? ` → "${truncate(String(input.pattern), 80)}"` : "";
+      return input.pattern ? ` → "${truncate(String(input.pattern), 160)}"` : "";
     case "WebFetch":
-      return input.url ? ` → ${truncate(String(input.url), 80)}` : "";
+      return input.url ? ` → ${truncate(String(input.url), 160)}` : "";
     case "WebSearch":
-      return input.query ? ` → "${truncate(String(input.query), 80)}"` : "";
+      return input.query ? ` → "${truncate(String(input.query), 160)}"` : "";
     case "NotebookEdit":
       return input.notebook_path ? ` → ${basename(String(input.notebook_path))}` : "";
     default:
@@ -463,22 +463,21 @@ class LoopEngine extends EventEmitter {
         } else if ("name" in block && typeof block.name === "string") {
           const toolName = block.name;
           this.stats.toolCalls[toolName] = (this.stats.toolCalls[toolName] || 0) + 1;
+          const input = block.input as Record<string, unknown> | undefined;
+          const context = formatToolContext(toolName, input);
 
           if (toolName === "Task") {
             this.stats.subagentsSpawned++;
-            const input = block.input as Record<string, unknown> | undefined;
             const desc = input?.description || input?.prompt?.toString().slice(0, 50) || "unnamed";
             const agentType = input?.subagent_type || "unknown";
             this.log("📦", `Spawning subagent [${agentType}]: ${desc}`, "tool");
             this.logVerbose("📦", `Full input: ${JSON.stringify(input)}`, "tool");
           } else {
-            const input = block.input as Record<string, unknown> | undefined;
-            const context = formatToolContext(toolName, input);
             this.log("🔧", `${toolName}${context}`, "tool");
             this.logVerbose("🔧", `${toolName} input: ${truncate(JSON.stringify(input || {}), 200)}`, "tool");
           }
 
-          this.emit("tool", { name: toolName, context: formatToolContext(toolName, block.input as Record<string, unknown>), iteration: this.currentIteration });
+          this.emit("tool", { name: toolName, context, iteration: this.currentIteration });
         }
       }
 
