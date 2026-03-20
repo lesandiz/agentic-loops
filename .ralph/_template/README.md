@@ -10,25 +10,25 @@ The agent operates in a loop: read plan, pick next task, execute, verify, commit
 
 ## Quick Start
 
-1. **Copy** this template directory to `.ralph/<feature>/`
-2. **Write `SPEC.md`** — use `.ralph/_prompts/GENERATE_SPEC_PROMPT.md` as a prompt to draft it with an agent, then review and refine
-3. **Generate `PLAN.md`** — use `.ralph/_prompts/GENERATE_PLAN_PROMPT.md` as a prompt to derive tasks from the spec
-4. **Configure `PROMPT.md`** — remove PR stacking section if single-PR, adjust base path
-5. **Run the loop**: See https://github.com/lesandiz/agentic-loops
+1. **Init**: `/ralph:init my-feature` — scaffolds branch, directory, and template files
+2. **Research** (optional): `/ralph:research description of what to build` — explores codebase, outputs research docs
+3. **Generate spec**: `/ralph:spec description of what to build` — generates SPEC.md from research + codebase
+4. **Iterate on spec**: `/ralph:spec refine — add error handling, split phase 2...`
+5. **Review spec**: `/ralph:review` — validates quality, flags gaps
+6. **Generate plan**: `/ralph:plan` — validates spec, derives tasks, auto-configures PROMPT.md
+7. **Run the loop**: See https://github.com/lesandiz/agentic-loops
 
 ## File Purposes
 
 | File                  | Purpose                       | Who Writes                       | When Updated                      |
 | --------------------- | ----------------------------- | -------------------------------- | --------------------------------- |
-| `SPEC.md` or `specs/` | What to build and how         | Human (with AI assist)           | Rarely — before execution starts  |
-| `PLAN.md`             | Active tasks and progress     | Generated, then agent-maintained | Every turn                        |
+| `SPEC.md` or `specs/` | What to build and how         | Human via `/ralph:spec`          | Iterated until solid              |
+| `PLAN.md`             | Active tasks and progress     | `/ralph:plan`, then agent        | Every turn                        |
 | `COMPLETED_PHASES.md` | Completed phase history       | Agent                            | When a phase closes               |
-| `PROMPT.md`           | Agent operating instructions  | Human (from template)            | Once per feature                  |
+| `PROMPT.md`           | Agent operating instructions  | `/ralph:init` + `/ralph:plan`    | Auto-configured                   |
 | `SCRATCHPAD.md`       | Agent working memory          | Agent                            | Cleared when a phase closes       |
 | `adrs/`               | Architecture decision records | Agent                            | When deviating from spec/patterns |
 
-
-See also `.ralph/_prompts/` for agent-assisted authoring prompts (`GENERATE_SPEC_PROMPT.md`, `GENERATE_PLAN_PROMPT.md`).
 
 ## Scaling Rules
 
@@ -110,13 +110,11 @@ A task should represent a **coherent, cohesive changeset** — the smallest unit
 
 ## PROMPT.md Customisation
 
-The template PROMPT.md is designed to be feature-agnostic. Customise only:
+PROMPT.md is auto-configured by `/ralph:init` (base path) and `/ralph:plan` (PR stacking). Manual customisation is only needed for:
 
-| Section              | When to Customise                          |
-| -------------------- | ------------------------------------------ |
-| Context table        | Always — set the base path                 |
-| PR Stacking Protocol | Delete for single-PR features              |
-| Rules                | Add feature-specific constraints if needed |
+| Section | When to Customise                          |
+| ------- | ------------------------------------------ |
+| Rules   | Add feature-specific constraints if needed |
 
 ## Signals
 

@@ -193,6 +193,44 @@ Both implementations support spawning isolated subagents with independent contex
 
 Claude Code natively supports subagents and it doesn't require an explicit implementation to handle them.
 
+## Ralph Spec-Driven Framework
+
+Ralph is a spec-driven agentic development framework that ships with this repo. It provides a structured workflow for autonomous agent execution: write specs, generate plans, then let the agent loop handle implementation.
+
+### Setup in Your Repo
+
+Run the setup script to install Ralph into any existing git repository:
+
+```bash
+# Clone this repo (if you haven't already)
+git clone https://github.com/lesandiz/agentic-loops.git
+
+# Linux / macOS / WSL / Git Bash
+./agentic-loops/ralph-setup.sh /path/to/your/repo
+
+# Windows (PowerShell)
+.\agentic-loops\ralph-setup.ps1 C:\path\to\your\repo
+```
+
+This copies two directories into your project:
+- `.ralph/_template/` — template files for specs, plans, and prompts
+- `.claude/commands/ralph/` — Claude Code slash commands
+
+### Workflow
+
+Once installed, open Claude Code in your repo and use the slash commands:
+
+```bash
+/ralph:init my-feature                # scaffold branch + feature directory
+/ralph:research migrate auth to JWT   # (optional) explore codebase, output research docs
+/ralph:spec migrate auth to JWT       # generate SPEC.md
+/ralph:spec add token refresh logic   # iterate on spec
+/ralph:review                         # validate spec quality
+/ralph:plan                           # generate PLAN.md, configure PROMPT.md
+```
+
+Then run the agent loop to execute the plan autonomously. See `.ralph/_template/README.md` for full documentation.
+
 ## Development
 
 The codebase is written in TypeScript and uses:
