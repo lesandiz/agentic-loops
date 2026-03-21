@@ -25,6 +25,7 @@
 
 ---
 
+<!-- phase:1:start -->
 ## Phase 1: <Title>
 
 **Goal:** <One sentence describing the deliverable.>
@@ -78,9 +79,11 @@ public class Foo : IFoo
 dotnet build src/UD.Foo
 dotnet test src/UD.Tests.Foo
 ```
+<!-- phase:1:end -->
 
 ---
 
+<!-- phase:2:start -->
 ## Phase 2: <Title>
 
 **Goal:** <One sentence.>
@@ -111,10 +114,11 @@ dotnet test src/UD.Tests.Foo
 dotnet build src/UD.Foo
 dotnet test src/UD.Tests.Foo
 ```
+<!-- phase:2:end -->
 
 ---
 
-<!-- Repeat phase sections as needed. -->
+<!-- Repeat phase sections as needed. Each phase MUST be wrapped in phase:N:start/end markers. -->
 <!--
 ## When to split this file
 

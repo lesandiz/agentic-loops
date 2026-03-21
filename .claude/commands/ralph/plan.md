@@ -15,7 +15,7 @@ Before generating, run a quick pass/fail scan of the spec. This is NOT a full re
 
 ### Checks (all must pass to proceed)
 
-1. **Structure**: every phase has all required sections (Changes table, Acceptance Criteria, Test Cases, Verification)
+1. **Structure**: every phase has all required sections (Changes table, Acceptance Criteria, Test Cases, Verification) and is wrapped in `<!-- phase:N:start/end -->` markers
 2. **Vague language**: no acceptance criteria containing "works correctly", "handles edge cases", "as expected", "properly", "appropriately"
 3. **Open choices**: no Changes table entries with "choose appropriate", "consider using", "as needed", "adjust accordingly"
 4. **Test coverage**: every Changes table row has at least one matching `Covers` entry in Test Cases

@@ -1,5 +1,10 @@
 # Scratchpad
 
-> Agent working memory. Use for research notes, intermediate findings, and draft content.
-> Persists across tasks within a phase to carry context (e.g. notes from T1 that inform T3).
-> **MUST be emptied when closing a phase** — start each new phase with a clean slate.
+> Agent working memory. Persists across tasks within a phase.
+> **MUST be emptied when closing a phase.**
+
+## Findings
+<!-- Facts discovered during execution that affect future tasks in this phase. -->
+
+## Blocked / Deferred
+<!-- Items noticed but not actionable in the current task. -->

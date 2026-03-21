@@ -19,6 +19,7 @@ Evaluate the spec against each category below. For each, report **PASS** or **FA
 ### 1. Structure Completeness
 
 Every phase MUST have ALL of these sections:
+- [ ] Phase markers (`<!-- phase:N:start -->` before phase heading, `<!-- phase:N:end -->` after Verification)
 - [ ] Changes table (Action | File | Change)
 - [ ] Code snippets (for non-trivial implementations)
 - [ ] Acceptance Criteria (binary pass/fail)

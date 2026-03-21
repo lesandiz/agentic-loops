@@ -32,43 +32,55 @@
 - **Build and test commands are exclusive** — only one subagent may run `dotnet build`, `dotnet test`, or any other project-wide verification command at a time. Never parallelise these operations.
 - Only the main agent decides when a turn ends.
 
+### When to use subagents
+
+- **Do use**: parallel edits across 4+ disjoint files within the same task, background builds while doing other prep work.
+- **Do not use**: sequential operations (build → test → format), editing 1-2 files, or any operation that depends on a prior result.
+- **Prefer direct tool calls** (Edit, Read, Bash) over subagents when the number of operations is small (≤3). Subagent overhead (spawn + context) only pays off for larger batches.
+- **Prefer the Edit tool** for file edits — it handles encoding correctly and provides clear error messages on mismatch. Shell scripts are acceptable for applying the same mechanical pattern across many files.
+
 ## Turn Protocol
 
-Each turn works on **exactly ONE task**. Even if you finish early, commit and end the turn.
+Each turn works on **exactly ONE task**. Phase closure (steps 14–19) is part of the final task's turn, not a separate turn.
 
 ### 1. Orient
 
 1. Read `PLAN.md`.
 2. Locate the **`## Active Phase`** section.
-3. Select the **first unchecked task** (`- [ ] T<n>`). This is your only task for this turn.
-4. Read **only** the spec section referenced by that task (e.g. `[SPEC.md § Phase 1 > Changes]` or `[specs/01-component.md § Changes]`). Do not load unrelated specs.
-5. **Pre-flight check** before writing any code:
+3. Read `SCRATCHPAD.md` — apply any findings from prior turns (e.g. files to handle carefully, patterns that don't apply as written).
+4. Select the **first unchecked task** (`- [ ] T<n>`). This is your only task for this turn.
+5. Read **only** the spec section referenced by that task.
+   - **Single SPEC.md with phase markers**: use `Grep` for `phase:N:start` to find the start line, then `Grep` for `phase:N:end` to find the end line, then `Read` with `offset` and `limit` to load only that phase's content. Do NOT read the full spec.
+   - **Single SPEC.md without markers** (legacy): read the full spec but do NOT re-read it later in the same turn unless you need to cross-reference a specific section.
+   - **Numbered specs** (`specs/01-component.md`): read only the referenced file.
+6. **Pre-flight check** before writing any code:
    - [ ] I have selected exactly ONE task
    - [ ] I am on the correct branch for this phase (see PLAN.md § Branch Strategy)
    - [ ] If this is the first task of a new phase, I have created the branch from the correct base
    - [ ] I will stop after this task completes
 
-> If no unchecked tasks remain, go to **step 13** (Close Phase).
+> If no unchecked tasks remain, go to **step 14** (Close Phase).
 
 ### 2. Execute
 
-6. Implement the task **and its tests** (see spec `§ Test Cases > Covers` column). Follow the spec exactly — use provided code snippets as the baseline.
-   - Record any discoveries, findings, or context that may help future tasks in `SCRATCHPAD.md`. This file persists across turns within the phase.
-7. **If blocked**: append to `PLAN.md § Issues` with format below, commit PLAN.md, and **end the turn**.
+7. Implement the task **and its tests** (see spec `§ Test Cases > Covers` column). Follow the spec exactly — use provided code snippets as the baseline.
+   - **Update `SCRATCHPAD.md`** when you discover facts that affect future tasks in this phase (e.g. a variable that looks unused but is referenced, a file that needs special handling). This file persists across turns within the phase — future turns inherit it.
+   - **Update the project's `CLAUDE.md`** when you discover codebase-level knowledge that outlives this feature: platform/encoding quirks (line endings, indentation), tooling workarounds, build system behaviours. These persist across all future work on the repo.
+8. **If blocked**: append to `PLAN.md § Issues` with format below, commit PLAN.md, and **end the turn**.
    ```
    - ⚠️ `T<n>` <description> — <why blocked, what's needed>
    ```
 
 ### 3. Verify (commit gate)
 
-8. Run the verification commands from the active phase's spec `§ Verification` (build, test, format).
-9. If verification **fails**: fix the issue and re-run verification. If the same failure persists after **2 fix-and-verify cycles**, treat the task as blocked (step 7).
-10. **Never mark a test as passing** without running it and confirming it passes in the output. If claiming a test exists, verify the test method is present in the file.
-11. Mark the task complete: change `- [ ] T<n>` to `- [x] T<n>` in PLAN.md.
+9. Run the verification commands from the active phase's spec `§ Verification` (build, test, format).
+10. If verification **fails**: fix the issue and re-run verification. If the same failure persists after **2 fix-and-verify cycles**, treat the task as blocked (step 8).
+11. **Never mark a test as passing** without running it and confirming it passes in the output. If claiming a test exists, verify the test method is present in the file.
+12. Mark the task complete: change `- [ ] T<n>` to `- [x] T<n>` in PLAN.md.
 
 ### 4. Commit
 
-12. Commit with message format:
+13. Commit with message format:
     ```
     <T<n> description>
 
@@ -79,23 +91,23 @@ Each turn works on **exactly ONE task**. Even if you finish early, commit and en
 
 > Skip this section if unchecked tasks remain in the active phase.
 
-13. Walk through every item in the active phase's spec `§ Acceptance Criteria`. If any fail, create corrective tasks in PLAN.md and **end the turn**.
-14. Complete the **Phase Gate** checklist in PLAN.md:
+14. Walk through every item in the active phase's spec `§ Acceptance Criteria`. If any fail, create corrective tasks in PLAN.md and **end the turn**.
+15. Complete the **Phase Gate** checklist in PLAN.md:
     ```
     - [ ] All tasks checked
     - [ ] All acceptance criteria met
     - [ ] Verification commands pass
     - [ ] Changes committed
     ```
-15. Move the completed phase content to `COMPLETED_PHASES.md` (append at the end).
-16. Clean `SCRATCHPAD.md` — start the next phase with a clean slate.
-17. Promote the next phase in PLAN.md: rename `## Phase <N+1> — <Title>` to `## Active Phase: <N+1> — <Title>`.
-18. Commit, push, and create PR if branch strategy requires it (see PLAN.md § Branch Strategy).
+16. Move the completed phase content to `COMPLETED_PHASES.md` (append at the end).
+17. Clean `SCRATCHPAD.md` — start the next phase with a clean slate.
+18. Promote the next phase in PLAN.md: rename `## Phase <N+1> — <Title>` to `## Active Phase: <N+1> — <Title>`.
+19. Commit, push, and create PR if branch strategy requires it (see PLAN.md § Branch Strategy).
 
 ### 6. Terminate
 
-19. If **no more phases remain**: create file `ralph.done` in the base path.
-20. If **blocked on all remaining tasks**: create file `ralph.blocked` in the base path containing:
+20. If **no more phases remain**: create file `ralph.done` in the base path.
+21. If **blocked on all remaining tasks**: create file `ralph.blocked` in the base path containing:
     ```
     phase: <N>
     tasks: T<n>, T<m>
@@ -104,21 +116,22 @@ Each turn works on **exactly ONE task**. Even if you finish early, commit and en
 
 ### 7. End Turn
 
-21. **Stop.** Do not select another task. The next turn will pick up where this one left off.
+22. **Stop.** Do not select another task. The next turn will pick up where this one left off.
 
 ## Rules
 
 ### Turn Discipline
-1. **ONE task per turn.** Never start the next task if the current one completes early. Phase boundaries are hard stops.
-2. **Escalation threshold**: if a task has been attempted for 3+ consecutive turns without completion, document blockers in PLAN.md and create `ralph.blocked`.
+1. **ONE task per turn.** Never start the next task if the current one completes early.
+2. **Phase closure is part of the final task's turn.** When the last task in a phase completes, proceed immediately to Close Phase (step 14) within the same turn — do not end the turn and defer closure to the next iteration.
+3. **Escalation threshold**: if a task has been attempted for 3+ consecutive turns without completion, document blockers in PLAN.md and create `ralph.blocked`.
 
 ### Spec Authority
-3. **Never deviate** from spec design decisions. If a DD is wrong, create `ralph.blocked`.
-4. **Specs override PLAN.md.** If there is a discrepancy, update PLAN.md to match the specs.
-5. **Never modify files** outside the spec's change list without adding an issue to PLAN.md.
+4. **Never deviate** from spec design decisions. If a DD is wrong, create `ralph.blocked`.
+5. **Specs override PLAN.md.** If there is a discrepancy, update PLAN.md to match the specs.
+6. **Never modify files** outside the spec's change list without adding an issue to PLAN.md.
 
 ### Architecture Decision Records (ADRs)
-6. Create an ADR when you need to **deviate from the spec or established patterns** (new dependencies, data flow changes, infrastructure decisions). ADRs are escalation gates:
+7. Create an ADR when you need to **deviate from the spec or established patterns** (new dependencies, data flow changes, infrastructure decisions). ADRs are escalation gates:
    1. Document the decision needed in `adrs/<NNN>-<title>.md`
    2. Mark related PLAN.md tasks as blocked, referencing the ADR
    3. Create `ralph.blocked` with `reason: ADR <NNN> awaiting decision`.
@@ -127,17 +140,17 @@ Each turn works on **exactly ONE task**. Even if you finish early, commit and en
    6. A human will review and communicate their decision
 
 ### Bug Discovery
-7. **Related to current task**: fix it within this turn.
-8. **Unrelated to current task**: document in PLAN.md § Issues for a future turn. Do not fix it now.
+8. **Related to current task**: fix it within this turn.
+9. **Unrelated to current task**: document in PLAN.md § Issues for a future turn. Do not fix it now.
 
 ### File Hygiene
-9. Keep `PLAN.md` lean — completed phases live in `COMPLETED_PHASES.md`.
-10. **Do not read `COMPLETED_PHASES.md`** unless an issue explicitly references a prior phase.
-11. **Debug logging**: you may add temporary logging to assist debugging. Remove it before committing unless it has operational value.
+10. Keep `PLAN.md` lean — completed phases live in `COMPLETED_PHASES.md`.
+11. **Do not read `COMPLETED_PHASES.md`** unless an issue explicitly references a prior phase.
+12. **Debug logging**: you may add temporary logging to assist debugging. Remove it before committing unless it has operational value.
 
 ### Code Quality
-12. Use the project's existing patterns — match style, naming, and structure of surrounding code.
-13. Run `dotnet format` before committing.
+13. Use the project's existing patterns — match style, naming, and structure of surrounding code.
+14. Run `dotnet format` before committing.
 
 ## PR Stacking Protocol
 

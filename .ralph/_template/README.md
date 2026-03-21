@@ -38,7 +38,7 @@ The decision to use a single `SPEC.md` vs numbered `specs/` is driven by **phase
 
 | Phases are...           | Use               | Why                                                                                   |
 | ----------------------- | ----------------- | ------------------------------------------------------------------------------------- |
-| Sequential / cumulative | Single `SPEC.md`  | Agent needs prior phase context to understand current phase                           |
+| Sequential / cumulative | Single `SPEC.md` with phase markers | Agent uses `<!-- phase:N:start/end -->` markers for offset reads — avoids loading completed phases |
 | Independent components  | Numbered `specs/` | Agent loads only the spec relevant to the active phase — less context, less confusion |
 
 A 5-phase feature where each phase modifies the same class sequentially belongs in one file. A 3-phase feature touching 3 unrelated components should be split.

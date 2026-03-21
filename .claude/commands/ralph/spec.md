@@ -59,6 +59,7 @@ These apply to BOTH generation and refinement:
 - **No implementation choices left to the agent** — decide patterns, names, and approaches in the spec
 - **Code snippets for anything non-trivial** — the agent will hallucinate patterns without them
 - **Phase ordering** — group sequential/dependent work together; independent components get separate phases
+- **Phase markers** — wrap each phase in `<!-- phase:N:start -->` and `<!-- phase:N:end -->` HTML comments. This allows agents to read only the active phase instead of the full spec. See the SPEC.md template for the exact format.
 - **Test Cases must map to Changes** — every row in the Changes table should have corresponding test coverage via the `Covers` column
 - **Ask, don't assume** — if something is unclear, ask the user rather than making plausible but potentially incorrect decisions
 
