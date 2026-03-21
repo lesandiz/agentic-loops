@@ -25,19 +25,38 @@
 - **Phase**: An ordered group of tasks that ship together as one deliverable.
 - **Subagent**: A worker spawned by the main agent to execute specific operations (file edits, searches, builds). Subagents do not control turn boundaries — they report results back to the main agent.
 
-## Subagent Constraints
+## Subagent Strategy
 
-- Subagents may parallelise work **within** the selected task (e.g. editing disjoint files for the same change). Parallelism does NOT mean selecting multiple tasks.
+The main agent is the **orchestrator and decision-maker**. Its context window should be reserved for reasoning: selecting tasks, interpreting specs, deciding how to handle edge cases, and reacting to failures. Subagents run in their own context window — delegate all bulk I/O to them so that file contents, build output, and diagnostic noise stay out of the main context.
+
+### Constraints
+
+- Subagents work **within** the selected task only — never assign work from a different task.
 - **Never assign two subagents to edit the same file.**
-- **Build and test commands are exclusive** — only one subagent may run `dotnet build`, `dotnet test`, or any other project-wide verification command at a time. Never parallelise these operations.
-- Only the main agent decides when a turn ends.
+- **Build and test commands are exclusive** — only one subagent may run `dotnet build`, `dotnet test`, or any other project-wide command at a time.
 
-### When to use subagents
+### What to delegate
 
-- **Do use**: parallel edits across 4+ disjoint files within the same task, background builds while doing other prep work.
-- **Do not use**: sequential operations (build → test → format), editing 1-2 files, or any operation that depends on a prior result.
-- **Prefer direct tool calls** (Edit, Read, Bash) over subagents when the number of operations is small (≤3). Subagent overhead (spawn + context) only pays off for larger batches.
-- **Prefer the Edit tool** for file edits — it handles encoding correctly and provides clear error messages on mismatch. Shell scripts are acceptable for applying the same mechanical pattern across many files.
+Delegate work where the **outcome is predictable** and the main agent only needs a summary:
+
+- **Bulk file edits** (5+ files): when the spec defines exact changes, the subagent reads files, applies edits, and reports what succeeded/failed. The main agent never needs to see the file contents.
+- **Verification** (build, test, format, warning counts): the subagent runs the full pipeline and returns pass/fail + any error lines. Verbose build output stays in the subagent's context.
+- **Exploratory diagnostics**: when a build fails or a pattern needs investigation, delegate the grepping/reading to a subagent. It returns findings; the main agent decides how to act.
+- **Self-contained sequential chains** (build → test → format → report): if no decisions are needed between steps, the entire chain belongs in a subagent.
+
+### What to keep in main context
+
+Keep work where the main agent must **reason about the content** before deciding next steps:
+
+- **Files that inform decisions**: reading a file to determine whether a pattern applies, or how to structure a change. These reads directly feed the main agent's judgement.
+- **Adaptive chains**: sequences where intermediate results change what happens next (e.g. "if the build fails with error X, try approach A; if error Y, try approach B").
+- **Small operations** (1-3 files or commands): subagent spawn overhead outweighs the context savings.
+
+### Writing effective subagent prompts
+
+- **List exact file paths and exact changes** — the subagent has no prior context about the task.
+- **Pass task-specific context**: subagents load `CLAUDE.md` automatically but not `SCRATCHPAD.md` or your in-turn discoveries. Include relevant findings and safety rules in the prompt.
+- **Request structured output**: "Report: files modified, files that failed, error messages."
 
 ## Turn Protocol
 
