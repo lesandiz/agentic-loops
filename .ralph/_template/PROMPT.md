@@ -68,8 +68,8 @@ Each turn works on **exactly ONE task**. Phase closure (steps 14–19) is part o
 2. Locate the **`## Active Phase`** section.
 3. Read `SCRATCHPAD.md` — apply any findings from prior turns (e.g. files to handle carefully, patterns that don't apply as written).
 4. Select the **first unchecked task** (`- [ ] T<n>`). This is your only task for this turn.
-5. Read **only** the spec section referenced by that task.
-   - **Single SPEC.md with phase markers**: use `Grep` for `phase:N:start` to find the start line, then `Grep` for `phase:N:end` to find the end line, then `Read` with `offset` and `limit` to load only that phase's content. Do NOT read the full spec.
+5. Read the spec section referenced by that task.
+   - **Single SPEC.md with phase markers**: first, read the spec header (everything before `phase:1:start` — Context, Design Decisions, Scope) as these contain cross-cutting decisions that apply to all tasks. Then use `Grep` for `phase:N:start` to find the start line and `Grep` for `phase:N:end` to find the end line, then `Read` with `offset` and `limit` to load only that phase's content.
    - **Single SPEC.md without markers** (legacy): read the full spec but do NOT re-read it later in the same turn unless you need to cross-reference a specific section.
    - **Numbered specs** (`specs/01-component.md`): read only the referenced file.
 6. **Pre-flight check** before writing any code:
