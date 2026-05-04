@@ -1,10 +1,8 @@
 // https://github.com/github/awesome-copilot/blob/main/instructions/copilot-sdk-nodejs.instructions.md
 
-import { CopilotClient, type SessionEvent, defineTool } from "@github/copilot-sdk";
+import { CopilotClient, type SessionEvent, approveAll } from "@github/copilot-sdk";
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
-import { z } from "zod";
 
 interface RalphLoopConfig {
   maxIterations: number;
@@ -23,13 +21,6 @@ interface TokenUsage {
   totalTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
-}
-
-interface SubagentResult {
-  success: boolean;
-  summary: string;
-  toolCalls: Record<string, number>;
-  durationMs: number;
 }
 
 interface RunStats {
@@ -51,27 +42,11 @@ interface SubagentInfo {
   toolCalls: number;
 }
 
-// Tool names that spawn subagents or delegate work
-// Note: Copilot CLI doesn't spawn local subagents like Claude's "Task" tool
-// - "delegate" / "coding_agent": Creates async coding agent on GitHub (opens PR)
-// - "agent" / "invoke_agent": Invokes custom agent personas
-// - "Task": Claude SDK compatibility (won't appear in Copilot)
-const SUBAGENT_TOOLS = [
-  "Task",          // Claude SDK
-  "delegate",      // Copilot /delegate command
-  "coding_agent",  // Copilot coding agent
-  "agent",         // Copilot /agent command
-  "invoke_agent",  // Custom agent invocation
-  "spawn_agent",   // Generic
-  "run_agent",     // Generic
-  "subagent",      // Our custom subagent tool
-];
-
 const DEFAULT_CONFIG: RalphLoopConfig = {
   maxIterations: 5,
   delayMs: 1000,
   promptFile: "PROMPT.md",
-  model: "claude-sonnet-4.5",
+  model: "claude-sonnet-4.6",
   verbose: false,
   logFile: undefined,
   streaming: true,
@@ -86,6 +61,10 @@ function sleep(ms: number): Promise<void> {
 let logFileStream: fs.WriteStream | null = null;
 
 function initLogFile(filePath: string): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
   logFileStream = fs.createWriteStream(filePath, { flags: "a" });
   logFileStream.write(`\n--- Log started: ${new Date().toISOString()} ---\n`);
 }
@@ -163,14 +142,6 @@ function formatToolContext(toolName: string, args: Record<string, unknown> | und
     return ` → ${basename(String(notebookPath))}`;
   }
 
-  // Task/subagent description
-  if (name === "task" || name === "subagent") {
-    const desc = args.description || args.prompt || args.task;
-    if (desc) {
-      return ` → ${truncate(String(desc), 80)}`;
-    }
-  }
-
   return "";
 }
 
@@ -191,170 +162,6 @@ function initStats(): RunStats {
     },
     activeSubagents: new Map(),
   };
-}
-
-function isSubagentTool(toolName: string): boolean {
-  return SUBAGENT_TOOLS.some(t =>
-    toolName.toLowerCase().includes(t.toLowerCase())
-  );
-}
-
-function extractSubagentInfo(toolName: string, args: Record<string, unknown>): SubagentInfo {
-  // Handle both direct fields and nested 'arguments' structure
-  const id = (args.toolCallId as string) || (args.id as string) || `subagent-${Date.now()}`;
-  const agentType = (args.subagent_type as string) ||
-    (args.agent_type as string) ||
-    (args.type as string) ||
-    toolName;
-  const description = (args.description as string) ||
-    (args.prompt as string)?.slice(0, 80) ||
-    (args.task as string)?.slice(0, 80) ||
-    "unnamed";
-
-  return {
-    id,
-    type: agentType,
-    description,
-    startTime: Date.now(),
-    toolCalls: 0,
-  };
-}
-
-/**
- * Spawn an isolated subagent with its own context window.
- * Only the summary is returned to the parent, keeping parent context clean.
- * Tokens are automatically accumulated in the shared stats.tokens counter.
- */
-async function spawnSubagent(
-  client: CopilotClient,
-  task: string,
-  agentType: string,
-  model: string,
-  verbose: boolean,
-  stats: RunStats
-): Promise<SubagentResult> {
-  const startTime = Date.now();
-  const subToolCalls: Record<string, number> = {};
-  let lastMessage = "";
-  let sessionTokens = 0;
-
-  log("📦", `[Subagent:${agentType}] Starting isolated session`);
-  logVerbose("📦", `[Subagent:${agentType}] Task: ${task}`, verbose);
-
-  const subSession = await client.createSession({
-    model,
-    streaming: false, // Subagents don't stream to reduce noise
-  });
-
-  const result = await new Promise<SubagentResult>((resolve) => {
-    subSession.on((event: SessionEvent) => {
-      const eventData = (event as { data?: Record<string, unknown> }).data;
-
-      switch (event.type) {
-        case "assistant.message":
-          lastMessage = (eventData?.content as string) || "";
-          break;
-
-        case "assistant.usage":
-          if (eventData) {
-            const input = (eventData.inputTokens as number) || 0;
-            const output = (eventData.outputTokens as number) || 0;
-            const cacheRead = (eventData.cacheReadTokens as number) || 0;
-            const cacheWrite = (eventData.cacheWriteTokens as number) || 0;
-
-            // Accumulate directly to shared stats
-            stats.tokens.inputTokens += input;
-            stats.tokens.outputTokens += output;
-            stats.tokens.cacheReadTokens += cacheRead;
-            stats.tokens.cacheWriteTokens += cacheWrite;
-            stats.tokens.totalTokens += input + output;
-
-            sessionTokens += input + output;
-          }
-          break;
-
-        case "tool.execution_start":
-          const toolName = eventData?.toolName as string;
-          if (toolName) {
-            subToolCalls[toolName] = (subToolCalls[toolName] || 0) + 1;
-            logVerbose("📦", `[Subagent:${agentType}] Tool: ${toolName}`, verbose);
-          }
-          break;
-
-        case "session.idle":
-          const durationMs = Date.now() - startTime;
-          log("📦", `[Subagent:${agentType}] Complete (${durationMs}ms, ${sessionTokens} tokens)`);
-          resolve({
-            success: true,
-            summary: lastMessage,
-            toolCalls: subToolCalls,
-            durationMs,
-          });
-          break;
-
-        case "session.error":
-          const errorMsg = (eventData?.message as string) || "Unknown error";
-          log("❌", `[Subagent:${agentType}] Error: ${errorMsg}`);
-          resolve({
-            success: false,
-            summary: `Error: ${errorMsg}`,
-            toolCalls: subToolCalls,
-            durationMs: Date.now() - startTime,
-          });
-          break;
-      }
-    });
-
-    // Send the task to the subagent
-    subSession.send({ prompt: task });
-  });
-
-  // Clean up isolated session
-  await subSession.destroy();
-
-  return result;
-}
-
-/**
- * Create the subagent tool using defineTool with handler.
- */
-function createSubagentTool(
-  client: CopilotClient,
-  stats: RunStats,
-  model: string,
-  verbose: boolean
-) {
-  return defineTool("subagent", {
-    description: `Spawn a subagent with its own context window to perform a task. The subagent runs independently and only returns a summary, keeping the main context clean. Use this for research, exploration, or delegating subtasks.`,
-    parameters: z.object({
-      task: z.string().describe("The task for the subagent to perform"),
-      agent_type: z.string().optional().describe("Type of agent: 'research', 'code', 'explore', 'general'"),
-      max_words: z.number().optional().describe("Maximum words in the summary (default: 200)"),
-    }),
-    handler: async ({ task, agent_type = "general", max_words = 200 }) => {
-      // Note: subagentsSpawned is incremented in the event handler when tool.execution_start fires
-
-      // Construct prompt with summarization instruction
-      const subagentPrompt = `${task}
-
-IMPORTANT: When complete, provide a concise summary of your findings and any key results.
-Keep your final response under ${max_words} words, focusing on actionable information.`;
-
-      const result = await spawnSubagent(client, subagentPrompt, agent_type, model, verbose, stats);
-
-      // Track subagent tool calls in main stats (prefixed)
-      for (const [tool, count] of Object.entries(result.toolCalls)) {
-        const key = `subagent:${tool}`;
-        stats.toolCalls[key] = (stats.toolCalls[key] || 0) + count;
-      }
-
-      // Note: subagentsCompleted is tracked via tool.execution_complete event
-
-      return result.success
-        ? result.summary
-        : `Subagent failed: ${result.summary}`;
-    },
-  });
 }
 
 function formatElapsed(ms: number): string {
@@ -414,50 +221,6 @@ function readPrompt(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8").trim();
 }
 
-function loadInstructions(cwd?: string): string {
-  const instructions: string[] = [];
-  const projectDir = cwd || process.cwd();
-
-  // User-level instruction files
-  const userPaths = [
-    path.join(os.homedir(), ".github", "copilot-instructions.md"),
-    path.join(os.homedir(), ".copilot", "instructions.md"),
-    path.join(os.homedir(), ".claude", "CLAUDE.md"),
-  ];
-
-  // Project-level instruction files
-  const projectPaths = [
-    path.join(projectDir, ".github", "copilot-instructions.md"),
-    path.join(projectDir, "COPILOT.md"),
-    path.join(projectDir, "CLAUDE.md"),
-  ];
-
-  // Load user instructions (first match wins)
-  for (const p of userPaths) {
-    if (fs.existsSync(p)) {
-      const content = fs.readFileSync(p, "utf-8").trim();
-      if (content) {
-        instructions.push(`# User Instructions (${path.basename(p)})\n\n${content}`);
-        log("📋", `Loaded user instructions: ${p}`);
-        break;
-      }
-    }
-  }
-
-  // Load project instructions (first match wins)
-  for (const p of projectPaths) {
-    if (fs.existsSync(p)) {
-      const content = fs.readFileSync(p, "utf-8").trim();
-      if (content) {
-        instructions.push(`# Project Instructions (${path.basename(p)})\n\n${content}`);
-        log("📋", `Loaded project instructions: ${p}`);
-        break;
-      }
-    }
-  }
-
-  return instructions.join("\n\n---\n\n");
-}
 
 async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
   const cfg = { ...DEFAULT_CONFIG, ...config };
@@ -476,8 +239,6 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
   if (cfg.cwd) log("📂", `Working directory: ${cfg.cwd}`);
   log("📝", `Prompt: ${promptPath}`);
 
-  // Load instruction files
-  const customInstructions = loadInstructions(cfg.cwd);
   if (cfg.verbose) log("🔍", "Verbose mode enabled");
   if (cfg.logFile) log("🪵", `Logging to: ${cfg.logFile}`);
 
@@ -488,9 +249,6 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
   try {
     await client.start();
     log("✅", "Copilot client started");
-
-    // Create the subagent tool with handler
-    const subagentTool = createSubagentTool(client, stats, cfg.model!, cfg.verbose!);
 
     const promptDir = path.dirname(path.resolve(promptPath));
 
@@ -515,16 +273,11 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
       const session = await client.createSession({
         model: cfg.model,
         streaming: cfg.streaming,
-        tools: [subagentTool],
-        ...(customInstructions && {
-          systemMessage: {
-            mode: "append" as const,
-            content: customInstructions,
-          },
-        }),
+        enableConfigDiscovery: true,
+        onPermissionRequest: approveAll,
       });
 
-      const activeToolExecutions = new Map<string, { name: string; isSubagent: boolean }>();
+      const activeToolExecutions = new Map<string, string>();
 
       const iterationComplete = new Promise<void>((resolve, reject) => {
         session.on((event: SessionEvent) => {
@@ -564,34 +317,23 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
               break;
 
             // Tool execution started
-            case "tool.execution_start":
+            case "tool.execution_start": {
               const toolName = eventData?.toolName as string;
               const toolId = eventData?.toolCallId as string;
               const toolArgs = eventData?.arguments as Record<string, unknown> || {};
-              const isSubagent = isSubagentTool(toolName);
 
               if (toolId) {
-                activeToolExecutions.set(toolId, { name: toolName, isSubagent });
+                activeToolExecutions.set(toolId, toolName);
               }
 
               if (toolName) {
                 stats.toolCalls[toolName] = (stats.toolCalls[toolName] || 0) + 1;
-
-                // Check if this is a subagent-spawning tool
-                if (isSubagent) {
-                  stats.subagentsSpawned++;
-                  const subagentInfo = extractSubagentInfo(toolName, toolArgs);
-                  stats.activeSubagents.set(subagentInfo.id, subagentInfo);
-
-                  log("📦", `Spawning subagent [${subagentInfo.type}]: ${truncate(subagentInfo.description, 80)}`);
-                  logVerbose("📦", `Full args: ${JSON.stringify(toolArgs)}`, cfg.verbose!);
-                } else {
-                  const context = formatToolContext(toolName, toolArgs);
-                  log("🔧", `${toolName}${context}`);
-                  logVerbose("🔧", `${toolName} args: ${truncate(JSON.stringify(toolArgs), 200)}`, cfg.verbose!);
-                }
+                const context = formatToolContext(toolName, toolArgs);
+                log("🔧", `${toolName}${context}`);
+                logVerbose("🔧", `${toolName} args: ${truncate(JSON.stringify(toolArgs), 200)}`, cfg.verbose!);
               }
               break;
+            }
 
             // Tool execution partial result (streaming output)
             case "tool.execution_partial_result":
@@ -601,25 +343,53 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
               break;
 
             // Tool execution completed
-            case "tool.execution_complete":
+            case "tool.execution_complete": {
               const completedToolId = eventData?.toolCallId as string;
-              const toolExecution = completedToolId ? activeToolExecutions.get(completedToolId) : null;
+              const completedToolName = completedToolId ? activeToolExecutions.get(completedToolId) : null;
 
-              if (toolExecution) {
+              if (completedToolName) {
                 const telemetry = eventData?.toolTelemetry as Record<string, unknown> | undefined;
                 const duration = telemetry?.durationMs || telemetry?.duration;
                 const elapsed = duration ? ` (${duration}ms)` : "";
                 const success = eventData?.success !== false;
                 const successIcon = success ? "✓" : "✗";
-                logVerbose("🔧", `${toolExecution.name} ${successIcon}${elapsed}`, cfg.verbose!);
-
-                // Track subagent completion
-                if (toolExecution.isSubagent && success) {
-                  stats.subagentsCompleted++;
-                }
-
+                logVerbose("🔧", `${completedToolName} ${successIcon}${elapsed}`, cfg.verbose!);
                 activeToolExecutions.delete(completedToolId);
               }
+              break;
+            }
+
+            // Native subagent events
+            case "subagent.spawned": {
+              stats.subagentsSpawned++;
+              const spawnedAgent: SubagentInfo = {
+                id: (eventData?.agentId as string) || `subagent-${Date.now()}`,
+                type: (eventData?.agentType as string) || "unknown",
+                description: (eventData?.description as string) || "unnamed",
+                startTime: Date.now(),
+                toolCalls: 0,
+              };
+              stats.activeSubagents.set(spawnedAgent.id, spawnedAgent);
+              log("📦", `Subagent spawned [${spawnedAgent.type}]: ${truncate(spawnedAgent.description, 80)}`);
+              break;
+            }
+
+            case "subagent.completed": {
+              stats.subagentsCompleted++;
+              const completedAgentId = eventData?.agentId as string;
+              log("📦", `Subagent completed: ${completedAgentId || "unknown"}`);
+              break;
+            }
+
+            case "subagent.failed": {
+              const failedAgentId = eventData?.agentId as string;
+              const failReason = (eventData?.error as string) || "unknown";
+              log("❌", `Subagent failed [${failedAgentId}]: ${failReason}`);
+              break;
+            }
+
+            case "subagent.selected":
+              logVerbose("📦", `Subagent selected: ${(eventData?.agentName as string) || "unknown"}`, cfg.verbose!);
               break;
 
             // Context compaction started (infinite sessions)
@@ -640,8 +410,36 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
               reject(new Error(eventData?.message as string || "Session error"));
               break;
 
+            // Reasoning events (verbose only)
+            case "assistant.reasoning_start":
+              logVerbose("🧠", "Reasoning started", cfg.verbose!);
+              break;
+            case "assistant.reasoning_delta":
+              if (cfg.verbose && eventData?.deltaContent) {
+                process.stdout.write(eventData.deltaContent as string);
+              }
+              break;
+            case "assistant.reasoning_complete":
+              logVerbose("🧠", "Reasoning complete", cfg.verbose!);
+              break;
+
+            // Tool progress (verbose only)
+            case "tool.execution_progress":
+              if (cfg.verbose && eventData?.progress) {
+                logVerbose("🔧", `Progress: ${eventData.progress}`, cfg.verbose!);
+              }
+              break;
+
+            // Session shutdown with aggregate metrics
+            case "session.shutdown":
+              if (eventData) {
+                const apiTime = eventData.cumulativeApiTimeMs;
+                if (apiTime) log("📊", `Session API time: ${apiTime}ms`);
+                logVerbose("📊", `Shutdown data: ${JSON.stringify(eventData)}`, cfg.verbose!);
+              }
+              break;
+
             default:
-              // Print unhandled events
               logVerbose("❓", `Unhandled: ${event.type} | ${JSON.stringify(eventData || {})}`, cfg.verbose!);
               break;
           }
@@ -675,7 +473,7 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 // CLI usage: npx tsx ralph-loop-copilot.ts [options]
 //   --iterations=N    Max iterations (default: 5)
 //   --delay=N         Delay between iterations in ms (default: 1000)
-//   --model=NAME      Model to use (default: claude-sonnet-4.5)
+//   --model=NAME      Model to use (default: claude-sonnet-4.6)
 //   --prompt=FILE     Prompt file path (default: PROMPT.md, relative to --cwd if set)
 //   --cwd=DIR         Working directory for Copilot tools and prompt file
 //   --verbose         Enable verbose output
@@ -683,12 +481,12 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
 //   --no-streaming    Disable streaming mode
 //
 // Available models (via Copilot):
-// - gpt-5.2-codex
-// - gpt-5.2
-// - claude-sonnet-4.5
+// - claude-sonnet-4.6 (default)
+// - claude-opus-4.6
 // - claude-haiku-4.5
-// - claude-opus-4.5
-// - gemini-3-pro-preview
+// - gpt-5
+// - gemini-3.1-pro
+// - gemini-3-flash
 
 function parseArgs(args: string[]): Partial<RalphLoopConfig> {
   const config: Partial<RalphLoopConfig> = {};
@@ -719,7 +517,7 @@ Usage: npx tsx ralph-loop-copilot.ts [options]
 Options:
   --iterations=N    Max iterations (default: 5)
   --delay=N         Delay between iterations in ms (default: 1000)
-  --model=NAME      Model to use (default: claude-sonnet-4.5)
+  --model=NAME      Model to use (default: claude-sonnet-4.6)
   --prompt=FILE     Prompt file path (default: PROMPT.md, relative to --cwd if set)
   --cwd=DIR         Working directory for Copilot tools and prompt file
   --verbose, -v     Enable verbose output (show full tool inputs)
@@ -728,13 +526,12 @@ Options:
   --help, -h        Show this help message
 
 Models (via Copilot):
-  gpt-5.2-codex
-  gpt-5.2
-  gpt-5-mini
-  claude-sonnet-4.5
+  claude-sonnet-4.6     (default)
+  claude-opus-4.6
   claude-haiku-4.5
-  claude-opus-4.5
-  gemini-3-pro-preview
+  gpt-5
+  gemini-3.1-pro
+  gemini-3-flash
 `);
       process.exit(0);
     }
