@@ -359,37 +359,47 @@ async function ralphLoop(config: Partial<RalphLoopConfig> = {}): Promise<void> {
               break;
             }
 
-            // Native subagent events
-            case "subagent.spawned": {
+            // Native subagent events (SDK uses "subagent.started", not "subagent.spawned")
+            case "subagent.started": {
               stats.subagentsSpawned++;
+              const agentId = (event as { agentId?: string }).agentId || `subagent-${Date.now()}`;
               const spawnedAgent: SubagentInfo = {
-                id: (eventData?.agentId as string) || `subagent-${Date.now()}`,
-                type: (eventData?.agentType as string) || "unknown",
-                description: (eventData?.description as string) || "unnamed",
+                id: agentId,
+                type: (eventData?.agentName as string) || "unknown",
+                description: (eventData?.agentDescription as string) || (eventData?.agentDisplayName as string) || "unnamed",
                 startTime: Date.now(),
                 toolCalls: 0,
               };
               stats.activeSubagents.set(spawnedAgent.id, spawnedAgent);
-              log("📦", `Subagent spawned [${spawnedAgent.type}]: ${truncate(spawnedAgent.description, 80)}`);
+              log("📦", `Subagent started [${spawnedAgent.type}]: ${truncate(spawnedAgent.description, 80)}`);
               break;
             }
 
             case "subagent.completed": {
               stats.subagentsCompleted++;
-              const completedAgentId = eventData?.agentId as string;
-              log("📦", `Subagent completed: ${completedAgentId || "unknown"}`);
+              const agentId = (event as { agentId?: string }).agentId;
+              const agentName = (eventData?.agentDisplayName || eventData?.agentName) as string;
+              const duration = eventData?.durationMs ? ` (${eventData.durationMs}ms)` : "";
+              const tokens = eventData?.totalTokens ? ` [${formatNumber(eventData.totalTokens as number)} tokens]` : "";
+              const tools = eventData?.totalToolCalls ? ` [${eventData.totalToolCalls} tool calls]` : "";
+              log("📦", `Subagent completed: ${agentName || agentId || "unknown"}${duration}${tokens}${tools}`);
               break;
             }
 
             case "subagent.failed": {
-              const failedAgentId = eventData?.agentId as string;
+              const failedAgentId = (event as { agentId?: string }).agentId;
+              const failedAgentName = (eventData?.agentDisplayName || eventData?.agentName) as string;
               const failReason = (eventData?.error as string) || "unknown";
-              log("❌", `Subagent failed [${failedAgentId}]: ${failReason}`);
+              log("❌", `Subagent failed [${failedAgentName || failedAgentId || "unknown"}]: ${failReason}`);
               break;
             }
 
             case "subagent.selected":
-              logVerbose("📦", `Subagent selected: ${(eventData?.agentName as string) || "unknown"}`, cfg.verbose!);
+              logVerbose("📦", `Subagent selected: ${(eventData?.agentDisplayName || eventData?.agentName) as string || "unknown"}`, cfg.verbose!);
+              break;
+
+            case "subagent.deselected":
+              logVerbose("📦", "Subagent deselected", cfg.verbose!);
               break;
 
             // Context compaction started (infinite sessions)
