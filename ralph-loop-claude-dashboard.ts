@@ -1,4 +1,4 @@
-import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, startup, type Query, type WarmQuery, type Options, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { EventEmitter } from "events";
 import * as dns from "dns";
 import * as fs from "fs";
@@ -50,6 +50,7 @@ interface LogEntry {
   prefix: string;
   msg: string;
   level: "info" | "tool" | "error" | "steer" | "system" | "agent";
+  subagent?: boolean;
 }
 
 interface IterationTokenSummary {
@@ -154,6 +155,8 @@ class LoopEngine extends EventEmitter {
   iterationHistory: IterationTokenSummary[] = [];
 
   private currentQuery: Query | null = null;
+  private warmQuery: WarmQuery | null = null;
+  private warmQueryStale = false;
   private sessionId: string | null = null;
   private steeringJustInjected = false;
   private cfg: DashboardConfig;
@@ -188,9 +191,9 @@ class LoopEngine extends EventEmitter {
     return this.state === "stopping" || this.state === "stopped";
   }
 
-  private log(prefix: string, msg: string, level: LogEntry["level"] = "info"): void {
+  private log(prefix: string, msg: string, level: LogEntry["level"] = "info", extra?: Partial<LogEntry>): void {
     const ts = new Date().toISOString().slice(11, 23);
-    const entry: LogEntry = { ts, iteration: this.currentIteration, prefix, msg, level };
+    const entry: LogEntry = { ts, iteration: this.currentIteration, prefix, msg, level, ...extra };
     const line = `[${ts}][${this.currentIteration}] ${prefix} ${msg}`;
     console.log(line);
     writeToLogFile(line);
@@ -271,6 +274,10 @@ class LoopEngine extends EventEmitter {
         this.currentQuery.close();
         this.currentQuery = null;
       }
+      if (this.warmQuery) {
+        this.warmQuery.close();
+        this.warmQuery = null;
+      }
     }
   }
 
@@ -288,8 +295,38 @@ class LoopEngine extends EventEmitter {
 
   changeModel(model: string): void {
     this.cfg.model = model;
+    this.warmQueryStale = true;
     this.log("🔄", `Model changed to: ${model} (takes effect next iteration)`, "system");
     this.emit("model-change", { model });
+  }
+
+  private buildQueryOptions(): Options {
+    return {
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      model: this.cfg.model,
+      cwd: this.cfg.cwd,
+      executable: "node",
+      settingSources: ["project", "user"],
+      forwardSubagentText: true,
+      allowedTools: [
+        "Task", "Bash", "Glob", "Grep", "LS", "ExitPlanMode", "Read", "Edit", "MultiEdit", "Write",
+        "NotebookEdit", "WebFetch", "TodoWrite", "WebSearch", "BashOutput", "KillBash",
+      ],
+    };
+  }
+
+  private async ensureWarmQuery(): Promise<WarmQuery> {
+    if (this.warmQuery && !this.warmQueryStale) return this.warmQuery;
+    if (this.warmQuery) {
+      this.warmQuery.close();
+      this.warmQuery = null;
+    }
+    this.warmQueryStale = false;
+    this.log("⏳", "Pre-warming subprocess...", "system");
+    this.warmQuery = await startup({ options: this.buildQueryOptions() });
+    this.log("✅", "Subprocess pre-warmed", "system");
+    return this.warmQuery;
   }
 
   /** Drain steering queue, interrupt the running query, and inject steering via streamInput. */
@@ -369,21 +406,15 @@ class LoopEngine extends EventEmitter {
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         // Fresh session each attempt
         this.sessionId = null;
-        this.currentQuery = query({
-          prompt: iterationPrompt,
-          options: {
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
-            model: this.cfg.model,
-            cwd: this.cfg.cwd,
-            executable: "node",
-            settingSources: ["project", "user"],
-            allowedTools: [
-              "Task", "Bash", "Glob", "Grep", "LS", "ExitPlanMode", "Read", "Edit", "MultiEdit", "Write",
-              "NotebookEdit", "WebFetch", "TodoWrite", "WebSearch", "BashOutput", "KillBash",
-            ],
-          },
-        });
+        try {
+          const warm = await this.ensureWarmQuery();
+          this.warmQuery = null; // consumed — single-use
+          this.currentQuery = warm.query(iterationPrompt);
+        } catch {
+          this.log("⚠️", "Pre-warm failed, falling back to direct query", "system");
+          this.warmQuery = null;
+          this.currentQuery = query({ prompt: iterationPrompt, options: this.buildQueryOptions() });
+        }
 
         try {
           for await (const message of this.currentQuery) {
@@ -403,7 +434,7 @@ class LoopEngine extends EventEmitter {
           if (this.isTransientError(err) && attempt < MAX_RETRIES) {
             const delay = RETRY_DELAY_MS * attempt;
             this.log("⚠️", `Transient error on iteration ${i + 1}, attempt ${attempt}/${MAX_RETRIES}: ${err}`, "error");
-            this.emit("retry", { iteration: this.currentIteration, attempt, maxRetries: MAX_RETRIES, error: String(err) });
+            this.emit("retry", { iteration: this.currentIteration, attempt, maxRetries: MAX_RETRIES, error: String(err), source: "loop" });
             this.log("⏳", `Retrying in ${delay}ms...`, "system");
             await sleep(delay);
           } else {
@@ -413,6 +444,7 @@ class LoopEngine extends EventEmitter {
         } finally {
           this.currentQuery = null;
           this.sessionId = null;
+          this.warmQuery = null;
         }
       }
 
@@ -435,6 +467,9 @@ class LoopEngine extends EventEmitter {
       }
 
       if (i < this.cfg.maxIterations - 1) {
+        if (!this.shouldStop) {
+          this.ensureWarmQuery().catch(() => {});
+        }
         this.log("⏳", `Waiting ${this.cfg.delayMs}ms before next iteration...`, "system");
         await sleep(this.cfg.delayMs);
       }
@@ -456,24 +491,53 @@ class LoopEngine extends EventEmitter {
       this.log("⚠️", `Context compaction #${this.stats.compactions} (${trigger}, ${preTokens} tokens before)`, "system");
     }
 
+    // SDK-internal API retry
+    if (message.type === "system" && (message as { subtype?: string }).subtype === "api_retry") {
+      const m = message as { attempt: number; max_retries: number; retry_delay_ms: number; error_status: number | null; error: string };
+      this.log("⚠️", `SDK retry ${m.attempt}/${m.max_retries} (status=${m.error_status}, error=${m.error}, delay=${m.retry_delay_ms}ms)`, "error");
+      this.emit("retry", { iteration: this.currentIteration, attempt: m.attempt, maxRetries: m.max_retries, error: m.error, source: "sdk" });
+    }
+
+    // Subagent task progress
+    if (message.type === "system" && (message as { subtype?: string }).subtype === "task_progress") {
+      const m = message as { task_id: string; description: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; last_tool_name?: string; summary?: string };
+      const tools = m.last_tool_name ? ` [${m.last_tool_name}]` : "";
+      this.log("📦", `Task ${m.task_id}: ${m.description} (${formatNumber(m.usage.total_tokens)} tokens, ${m.usage.tool_uses} tools, ${(m.usage.duration_ms / 1000).toFixed(1)}s${tools})`, "tool", { subagent: true });
+      if (m.summary) this.logVerbose("📦", `Task summary: ${m.summary}`, "tool");
+      this.emit("task-progress", m);
+    }
+
+    // API status indicator
+    if (message.type === "system" && (message as { subtype?: string }).subtype === "status") {
+      const m = message as { status: "compacting" | "requesting" | null; compact_result?: "success" | "failed"; compact_error?: string };
+      this.emit("status", { status: m.status, compact_result: m.compact_result, compact_error: m.compact_error });
+    }
+
     if (message.type === "assistant" && message.message?.content) {
+      const isSubagent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id != null;
       for (const block of message.message.content) {
         if ("text" in block && typeof block.text === "string") {
-          this.log("💬", block.text, "agent");
+          if (isSubagent) {
+            this.log("🤖", `[subagent] ${block.text}`, "agent", { subagent: true });
+            this.emit("subagent-text", { text: block.text, iteration: this.currentIteration });
+          } else {
+            this.log("💬", block.text, "agent");
+          }
         } else if ("name" in block && typeof block.name === "string") {
           const toolName = block.name;
           this.stats.toolCalls[toolName] = (this.stats.toolCalls[toolName] || 0) + 1;
           const input = block.input as Record<string, unknown> | undefined;
           const context = formatToolContext(toolName, input);
 
+          const subExtra = isSubagent ? { subagent: true } : undefined;
           if (toolName === "Task") {
             this.stats.subagentsSpawned++;
             const desc = input?.description || input?.prompt?.toString().slice(0, 50) || "unnamed";
             const agentType = input?.subagent_type || "unknown";
-            this.log("📦", `Spawning subagent [${agentType}]: ${desc}`, "tool");
+            this.log("📦", `Spawning subagent [${agentType}]: ${desc}`, "tool", subExtra);
             this.logVerbose("📦", `Full input: ${JSON.stringify(input)}`, "tool");
           } else {
-            this.log("🔧", `${toolName}${context}`, "tool");
+            this.log("🔧", `${toolName}${context}`, "tool", subExtra);
             this.logVerbose("🔧", `${toolName} input: ${truncate(JSON.stringify(input || {}), 200)}`, "tool");
           }
 
@@ -483,11 +547,13 @@ class LoopEngine extends EventEmitter {
 
     } else if (message.type === "result") {
       const subtype = (message as { subtype?: string }).subtype || "unknown";
+      const terminalReason = (message as { terminal_reason?: string }).terminal_reason;
+      const reasonSuffix = terminalReason ? ` [${terminalReason}]` : "";
       if (subtype === "error_during_execution" && this.steeringJustInjected) {
         this.steeringJustInjected = false;
         this.log("🔄", `Interrupted (steering)`, "steer");
       } else {
-        this.log("✅", `Completed: ${subtype}`, "system");
+        this.log("✅", `Completed: ${subtype}${reasonSuffix}`, "system");
       }
 
       const result = message as {
@@ -571,7 +637,10 @@ class HttpDashboardServer {
     this.engine.on("steer-ack", (data: SteeringItem) => this.broadcast("steer-ack", data));
     this.engine.on("iteration-summary", (data: IterationTokenSummary) => this.broadcast("iteration-summary", data));
     this.engine.on("model-change", (data: { model: string }) => this.broadcast("model-change", data));
-    this.engine.on("retry", (data: { iteration: number; attempt: number; maxRetries: number; error: string }) => this.broadcast("retry", data));
+    this.engine.on("retry", (data: { iteration: number; attempt: number; maxRetries: number; error: string; source: string }) => this.broadcast("retry", data));
+    this.engine.on("task-progress", (data: unknown) => this.broadcast("task-progress", data));
+    this.engine.on("status", (data: unknown) => this.broadcast("status", data));
+    this.engine.on("subagent-text", (data: unknown) => this.broadcast("subagent-text", data));
   }
 
   private broadcast(event: string, data: unknown): void {
@@ -849,6 +918,7 @@ Options:
   --help, -h      Show this help message
 
 Models (Vertex AI):
+  claude-opus-4-7@default
   claude-sonnet-4-6@default   (default)
   claude-opus-4-6@default
   claude-haiku-4-5@20251001

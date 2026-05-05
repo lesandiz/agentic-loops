@@ -129,6 +129,7 @@
   .log-entry.level-steer .prefix { color: var(--orange); }
   .log-entry.level-system .prefix { color: var(--text-dim); }
   .log-entry.level-agent .prefix { color: var(--green); }
+  .log-entry.subagent { border-left: 2px solid var(--purple); padding-left: 8px; margin-left: 4px; }
   .log-entry.level-info .prefix { color: var(--text); }
 
   .jump-btn {
@@ -432,6 +433,7 @@
   <h1>Ralph Dashboard</h1>
   <div style="display:flex;align-items:center;gap:8px">
     <button class="sidebar-toggle" onclick="toggleSidebar()">Panel</button>
+    <span id="statusIndicator" style="font-size:11px;color:var(--yellow);display:none"></span>
     <div id="stateBadge" class="state-badge state-idle">
       <span class="dot"></span>
       <span id="stateText">idle</span>
@@ -491,6 +493,7 @@
           <button class="model-preset" onclick="setModel('claude-haiku-4-5@20251001')">haiku-4.5</button>
           <button class="model-preset" onclick="setModel('claude-sonnet-4-6@default')">sonnet-4.6</button>
           <button class="model-preset" onclick="setModel('claude-opus-4-6@default')">opus-4.6</button>
+          <button class="model-preset" onclick="setModel('claude-opus-4-7@default')">opus-4.7</button>
         </div>
       </div>
     </div>
@@ -617,7 +620,7 @@
 
   function addLogEntry(entry) {
     const div = document.createElement('div');
-    div.className = `log-entry level-${entry.level}`;
+    div.className = `log-entry level-${entry.level}${entry.subagent ? ' subagent' : ''}`;
     div.dataset.level = entry.level;
     div.innerHTML =
       `<span class="ts">[${entry.ts}]</span>` +
@@ -798,6 +801,37 @@
       document.getElementById('eventCount').textContent = eventCount + ' events';
       iterationHistory = JSON.parse(e.data);
       renderTokenChart();
+    });
+
+    es.addEventListener('subagent-text', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+    });
+
+    es.addEventListener('retry', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+    });
+
+    es.addEventListener('task-progress', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+    });
+
+    es.addEventListener('status', function(e) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount + ' events';
+      const d = JSON.parse(e.data);
+      const el = document.getElementById('statusIndicator');
+      if (d.status === 'requesting') {
+        el.textContent = 'Requesting API...';
+        el.style.display = '';
+      } else if (d.status === 'compacting') {
+        el.textContent = 'Compacting context...';
+        el.style.display = '';
+      } else {
+        el.style.display = 'none';
+      }
     });
 
     es.addEventListener('keepalive', function() {});

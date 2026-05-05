@@ -1,10 +1,22 @@
-# Plan: Upgrade ralph-loop-claude-dashboard to SDK v0.2.126 Features
+# Plan: Upgrade ralph-loop-claude-dashboard to SDK v0.2.128 Features
 
 ## Context
 
-The Claude Agent SDK (v0.2.126, already installed) has added several capabilities since the dashboard was written. This upgrade surfaces new observability events, adds subprocess pre-warming, and enables real-time subagent streaming — all of which improve the dashboard's value as a production monitoring tool.
+The Claude Agent SDK has added several capabilities since the dashboard was written against v0.2.52. This upgrade surfaces new observability events, adds subprocess pre-warming, and enables real-time subagent streaming — all of which improve the dashboard's value as a production monitoring tool.
 
 **Design constraint preserved:** Every iteration starts with a fresh, clean context window. No session resume. No human-interaction tools (AskUserQuestion).
+
+## Prerequisite: SDK upgrade ✅
+
+Upgraded from v0.2.52 to v0.2.128. No breaking changes to existing dashboard code — all current APIs (`query()`, `Query.close()`, `Query.interrupt()`, `Query.streamInput()`, `SDKMessage`, `SDKUserMessage`, `Options` fields, `BetaUsage` fields) remain compatible. All required new types verified present in `sdk.d.ts`:
+
+- ✅ `api_retry` subtype (line 2332) — type name is `SDKAPIRetryMessage` (uppercase API); fields: `{ attempt, max_retries, retry_delay_ms, error_status: number | null, error: SDKAssistantMessageError }`
+- ✅ `SDKStatus = 'compacting' | 'requesting' | null` (line 3348); `SDKStatusMessage` also has optional `compact_result?: 'success' | 'failed'` and `compact_error?: string`
+- ✅ `terminal_reason?: TerminalReason` on `SDKResultSuccess` and `SDKResultError` (lines 3140, 3165)
+- ✅ `TerminalReason` = `'blocking_limit' | 'rapid_refill_breaker' | 'prompt_too_long' | 'image_error' | 'model_error' | 'aborted_streaming' | 'aborted_tools' | 'stop_hook_prevented' | 'hook_stopped' | 'tool_deferred' | 'max_turns' | 'completed'`
+- ✅ `forwardSubagentText?: boolean` in `Options` (line 1380)
+- ✅ `startup()` function → returns `Promise<WarmQuery>` (line 5266)
+- ✅ `WarmQuery` interface with `query()` and `close()` (line 5530)
 
 ## Files to modify
 
@@ -26,13 +38,17 @@ The Claude Agent SDK (v0.2.126, already installed) has added several capabilitie
 
 ## Change 2: Surface new system message subtypes
 
-Add three new handlers to `processMessage()` after the existing `compact_boundary` handler (line ~457). Each logs the event and emits an SSE-broadcast event.
+Add new handlers to `processMessage()` after the existing `compact_boundary` handler (line ~457). Each logs the event and emits an SSE-broadcast event.
+
+All three subtypes confirmed in v0.2.128 `sdk.d.ts`.
 
 ### 2a: `api_retry` — SDK-internal retry visibility
 ```
-subtype: 'api_retry' → log attempt/max_retries/error_status/delay
+subtype: 'api_retry' → log attempt/max_retries/error_status/error/delay
 emit "retry" event with source: "sdk" (existing loop retries get source: "loop")
 ```
+- Type: `SDKAPIRetryMessage` — `{ attempt: number, max_retries: number, retry_delay_ms: number, error_status: number | null, error: SDKAssistantMessageError }`
+- Note: `SDKAssistantMessageError` is a string union (`'rate_limit' | 'server_error' | 'authentication_failed' | ...`), not an object — log it directly
 - Also add `source: "loop"` to the existing retry emission at line ~406
 - Add `retry` SSE handler in HTML to render retry log entries
 
@@ -41,6 +57,7 @@ emit "retry" event with source: "sdk" (existing loop retries get source: "loop")
 subtype: 'task_progress' → log task_id, description, usage (tokens/tool_uses/duration)
 emit "task-progress" event
 ```
+- Type: `{ task_id, tool_use_id?, description, usage: { total_tokens, tool_uses, duration_ms }, last_tool_name?, summary? }`
 - Wire in `wireEngineEvents()`
 - Add `task-progress` SSE handler in HTML (entries render via existing log handler)
 
@@ -49,6 +66,7 @@ emit "task-progress" event
 subtype: 'status' → emit "status" event (no log, too transient)
 status: 'requesting' | 'compacting' | null
 ```
+- `SDKStatus = 'compacting' | 'requesting' | null` confirmed in v0.2.128
 - Wire in `wireEngineEvents()`
 - HTML: add `<span id="statusIndicator">` in header next to state badge
 - SSE handler shows "Requesting API..." / "Compacting context..." or hides on null
@@ -57,11 +75,15 @@ status: 'requesting' | 'compacting' | null
 
 ## Change 3: `terminal_reason` on result messages
 
+`terminal_reason?: TerminalReason` confirmed on both `SDKResultSuccess` and `SDKResultError` in v0.2.128. Valid values: `'blocking_limit' | 'rapid_refill_breaker' | 'prompt_too_long' | 'image_error' | 'model_error' | 'aborted_streaming' | 'aborted_tools' | 'stop_hook_prevented' | 'hook_stopped' | 'tool_deferred' | 'max_turns' | 'completed'`.
+
 In the result handler (line ~484), extract `terminal_reason` from the message. Log it as a suffix: `Completed: success [completed]`. Keeps the existing steering-interrupt check (`subtype === "error_during_execution" && steeringJustInjected`) intact.
 
 ---
 
 ## Change 4: `forwardSubagentText: true`
+
+`forwardSubagentText?: boolean` confirmed in `Options` type in v0.2.128 (line 1380). Per SDK JSDoc: "Forward subagent text and thinking blocks as assistant/user messages with `parent_tool_use_id` set. By default, only tool_use/tool_result blocks from subagents are emitted. When true, the full subagent conversation is forwarded." `parent_tool_use_id: string | null` confirmed on `SDKAssistantMessage` (line 2345).
 
 ### 4a: Add option
 Add `forwardSubagentText: true` to the query options object (line ~374). With Change 5 (startup), this moves into the startup options instead.
@@ -82,8 +104,12 @@ In the `message.type === "assistant"` branch (line ~459):
 
 ## Change 5: `startup()` pre-warm
 
+`startup()` and `WarmQuery` confirmed in v0.2.128.
+- `startup(params?: { options?: Options; initializeTimeoutMs?: number }): Promise<WarmQuery>` (line 5266)
+- `WarmQuery` (line 5530): `query(prompt: string | AsyncIterable<SDKUserMessage>): Query` (single-use per JSDoc) and `close(): void`. Implements `AsyncDisposable`.
+
 ### Rationale
-`WarmQuery.query()` is single-use (confirmed in SDK types). The value is hiding subprocess startup latency (~1-2s) inside the inter-iteration delay. Pattern: fire `startup()` right after an iteration completes, so the subprocess warms during the delay period.
+`WarmQuery.query()` is single-use (confirmed in SDK JSDoc: "Can only be called once per WarmQuery"). The value is hiding subprocess startup latency (~1-2s) inside the inter-iteration delay. Pattern: fire `startup()` right after an iteration completes, so the subprocess warms during the delay period.
 
 ### 5a: Update imports (line 1)
 Add `startup` and `type WarmQuery` to the import.
@@ -96,8 +122,9 @@ private warmQueryStale = false;
 
 ### 5c: Extract shared options into a method
 ```typescript
-private buildQueryOptions(): object { /* returns the options object currently inline at line ~374 */ }
+private buildQueryOptions(): Options { /* returns the options object currently inline at line ~374 */ }
 ```
+Requires adding `type Options` to the import from the SDK.
 This avoids duplicating options between `startup()` and the `query()` fallback.
 
 ### 5d: Add `ensureWarmQuery()` method
@@ -137,13 +164,23 @@ if (i < this.cfg.maxIterations - 1 && !this.shouldStop) {
 
 ## Implementation order
 
+0. **Prerequisite** — ✅ SDK upgraded to v0.2.128, all types verified
 1. **Change 1** (Opus 4.7) — independent, trivial
-2. **Change 2** (system message subtypes) — independent, additive
-3. **Change 3** (terminal_reason) — independent, small
-4. **Change 4** (forwardSubagentText) — adds option + processMessage logic
-5. **Change 5** (startup pre-warm) — refactors how query is created, touches same code as Change 4's option placement
+2. **Change 2** (system message subtypes) — independent, additive, all three subtypes confirmed
+3. **Change 3** (terminal_reason) — independent, small, type confirmed
+4. **Change 4** (forwardSubagentText) — option confirmed, adds option + processMessage logic
+5. **Change 5** (startup pre-warm) — startup/WarmQuery confirmed, refactors query creation path
 
 Changes 1-4 can be done in any order. Change 5 should be last since it refactors the query creation path that Changes 2-4 also touch.
+
+## Post-upgrade type verification checklist (v0.2.128)
+
+- [x] `api_retry` — `SDKAPIRetryMessage` with `{ attempt, max_retries, retry_delay_ms, error_status: number | null, error: SDKAssistantMessageError }`
+- [x] `SDKStatus` union — `'compacting' | 'requesting' | null`; `SDKStatusMessage` also has `compact_result?`, `compact_error?`
+- [x] `terminal_reason` — `TerminalReason` field on both result types (12 possible values)
+- [x] `forwardSubagentText` — boolean option in `Options`
+- [x] `startup` — `(params?) → Promise<WarmQuery>`
+- [x] `WarmQuery` — `{ query(prompt): Query, close(): void }`, implements `AsyncDisposable`
 
 ## Verification
 
